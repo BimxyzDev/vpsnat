@@ -1,0 +1,11 @@
+[Unit]
+Description=Run VPSNAT expiry checks hourly
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=1h
+Persistent=true
+Unit=vpsnat-expire.service
+
+[Install]
+WantedBy=timers.target

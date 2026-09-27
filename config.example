@@ -1,0 +1,14 @@
+# VPSNAT runtime configuration lives in /etc/vpsnat/vpsnat.conf
+# Values below are optional. 0 means unlimited where documented.
+PUBLIC_IP=
+GRACE_DAYS=3
+SHARED_SUSPEND_MINUTES=60
+SHARED_RESOURCE_THRESHOLD=100
+RESOURCE_SAMPLE_SECONDS=15
+BANDWIDTH_DEFAULT_QUOTA_GB=0
+BANDWIDTH_DEFAULT_RATE_MBIT=0
+NETWORK_MODE=direct
+RELAY_WG_PORT=51820
+# Telegram bot (set by: vpsnat bot-setup)
+TG_TOKEN=
+TG_ADMIN=

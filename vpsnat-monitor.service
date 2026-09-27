@@ -1,0 +1,14 @@
+[Unit]
+Description=VPSNAT resource and bandwidth monitor
+After=network-online.target snap.lxd.daemon.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/vpsnat monitor-loop
+Restart=always
+RestartSec=5
+User=root
+
+[Install]
+WantedBy=multi-user.target

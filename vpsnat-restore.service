@@ -1,0 +1,13 @@
+[Unit]
+Description=VPSNAT firewall and state restore
+After=network-online.target snap.lxd.daemon.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/vpsnat restore
+RemainAfterExit=yes
+User=root
+
+[Install]
+WantedBy=multi-user.target

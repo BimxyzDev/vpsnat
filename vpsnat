@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+set -uo pipefail
+
+export VPSNAT_APP_DIR="${VPSNAT_APP_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
+
+source "${VPSNAT_APP_DIR}/core.sh"
+source "${VPSNAT_APP_DIR}/db.sh"
+source "${VPSNAT_APP_DIR}/network.sh"
+source "${VPSNAT_APP_DIR}/ports.sh"
+source "${VPSNAT_APP_DIR}/bandwidth.sh"
+source "${VPSNAT_APP_DIR}/vps.sh"
+source "${VPSNAT_APP_DIR}/expire.sh"
+source "${VPSNAT_APP_DIR}/resource.sh"
+source "${VPSNAT_APP_DIR}/data.sh"
+source "${VPSNAT_APP_DIR}/bot.sh"
+source "${VPSNAT_APP_DIR}/relay.sh"
+source "${VPSNAT_APP_DIR}/install.sh"
+source "${VPSNAT_APP_DIR}/settings.sh"
+source "${VPSNAT_APP_DIR}/cli.sh"
+
+main "$@"

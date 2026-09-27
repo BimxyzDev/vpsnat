@@ -1,0 +1,22 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ShellCheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - name: Validate Bash
+        run: |
+          bash -n ./vpsnat
+          for f in *.sh; do bash -n "$f"; done
+          shellcheck -x -S warning -e SC1090,SC1091,SC2034 ./vpsnat *.sh
+      - name: Validate Python
+        run: python3 -m py_compile bot.py
+      - name: Run self-test
+        run: ./test.sh
