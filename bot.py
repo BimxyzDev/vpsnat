@@ -219,11 +219,14 @@ def main_keyboard() -> InlineKeyboardMarkup:
                 InlineKeyboardButton("➕ Buat VPS", callback_data="menu:create"),
             ],
             [
-                InlineKeyboardButton("🧾 VPS Expiring", callback_data="menu:expiring"),
-                InlineKeyboardButton("🖥️ Host", callback_data="menu:host"),
+                InlineKeyboardButton("🧾 Expiring", callback_data="menu:expiring"),
+                InlineKeyboardButton("🖥️ Host Ini", callback_data="menu:host"),
             ],
             [
+                InlineKeyboardButton("🌐 Multi-Node", callback_data="menu:nodes"),
                 InlineKeyboardButton("🔄 Sync", callback_data="menu:sync"),
+            ],
+            [
                 InlineKeyboardButton("❓ Bantuan", callback_data="menu:help"),
             ],
         ]
@@ -235,39 +238,57 @@ def back_keyboard(target: str = "menu:home") -> InlineKeyboardMarkup:
 
 
 def vps_action_keyboard(name: str, suspended: bool = False) -> InlineKeyboardMarkup:
+    """Tombol dikelompokkan per kategori (baris header non-klik sebagai pemisah visual)
+    supaya tidak terasa acak di layar sempit — mengikuti urutan yang sama dengan menu
+    interaktif CLI: Power → Info → Konfigurasi → Jaringan → Data → Siklus Hidup."""
     rows = [
-        [
-            InlineKeyboardButton("ℹ️ Detail", callback_data=f"vpsinfo:{name}"),
-            InlineKeyboardButton("📊 Resource", callback_data=f"vpsstats:{name}"),
-        ],
         [
             InlineKeyboardButton("▶️ Start", callback_data=f"act:start:{name}"),
             InlineKeyboardButton("⏹ Stop", callback_data=f"act:stop:{name}"),
             InlineKeyboardButton("🔄 Restart", callback_data=f"act:restart:{name}"),
         ],
         [
-            InlineKeyboardButton("⏳ Renew", callback_data=f"act:renew:{name}"),
-            InlineKeyboardButton("📅 Set Expire", callback_data=f"act:setexpire:{name}"),
-            InlineKeyboardButton("🔑 Password", callback_data=f"act:passwd:{name}"),
+            InlineKeyboardButton("ℹ️ Detail", callback_data=f"vpsinfo:{name}"),
+            InlineKeyboardButton("📊 Resource", callback_data=f"vpsstats:{name}"),
+        ],
+        [
+            InlineKeyboardButton("── Konfigurasi ──", callback_data="noop"),
         ],
         [
             InlineKeyboardButton("📐 Resize", callback_data=f"act:resize:{name}"),
-            InlineKeyboardButton("🌐 Ports", callback_data=f"act:ports:{name}"),
+            InlineKeyboardButton("🔑 Password", callback_data=f"act:passwd:{name}"),
         ],
         [
             InlineKeyboardButton("📶 Bandwidth", callback_data=f"vpsbw:{name}"),
             InlineKeyboardButton("🏷️ Tipe", callback_data=f"vpsplan:{name}"),
         ],
         [
+            InlineKeyboardButton("── Jaringan ──", callback_data="noop"),
+        ],
+        [
+            InlineKeyboardButton("🌐 Ports", callback_data=f"act:ports:{name}"),
+        ],
+        [
+            InlineKeyboardButton("── Masa Aktif ──", callback_data="noop"),
+        ],
+        [
+            InlineKeyboardButton("⏳ Renew", callback_data=f"act:renew:{name}"),
+            InlineKeyboardButton("📅 Set Expire", callback_data=f"act:setexpire:{name}"),
+        ],
+        [
+            InlineKeyboardButton("👤 Owner", callback_data=f"act:owner:{name}"),
+            InlineKeyboardButton("✅ Unsuspend" if suspended else "⏸ Suspend", callback_data=f"act:{'unsuspend' if suspended else 'suspend'}:{name}"),
+        ],
+        [
+            InlineKeyboardButton("── Data ──", callback_data="noop"),
+        ],
+        [
             InlineKeyboardButton("📸 Snapshot", callback_data=f"act:snapshot:{name}"),
             InlineKeyboardButton("💾 Backup", callback_data=f"act:backup:{name}"),
         ],
         [
+            InlineKeyboardButton("🧬 Clone", callback_data=f"act:clone:{name}"),
             InlineKeyboardButton("♻️ Reinstall", callback_data=f"act:reinstall:{name}"),
-            InlineKeyboardButton("✅ Unsuspend" if suspended else "⏸ Suspend", callback_data=f"act:{'unsuspend' if suspended else 'suspend'}:{name}"),
-        ],
-        [
-            InlineKeyboardButton("👤 Owner", callback_data=f"act:owner:{name}"),
         ],
         [InlineKeyboardButton("🗑 Hapus VPS", callback_data=f"danger:delete:{name}")],
         [InlineKeyboardButton("⬅️ Daftar VPS", callback_data="menu:vps")],
@@ -408,7 +429,7 @@ async def result_for_action(name: str, label: str, rc: int, out: str, include_in
 
 
 # ---------------- command fallback ----------------
-HELP = """<b>VPSNAT Bot</b>\n\n<b>Menu utama</b>: /start atau /menu\n\n<b>Read-only</b>\n/list — daftar VPS\n/info &lt;n&gt; — detail\n/ports &lt;n&gt; — port\n/host — info host\n/expiring [hari] — segera expired\n\n<b>Kontrol</b>\n/start_vps &lt;n&gt;  /stop &lt;n&gt;  /restart &lt;n&gt;\n/suspend &lt;n&gt;  /unsuspend &lt;n&gt;\n/passwd &lt;n&gt; [password]\n/resize &lt;n&gt; &lt;cpu&gt; &lt;ram_mb&gt; &lt;disk_gb&gt;\n\n<b>Buat / hapus</b>\n/create &lt;n&gt; &lt;image&gt; &lt;cpu&gt; &lt;ram&gt; &lt;disk&gt; &lt;expired&gt; [owner] [shared|dedicated]\n/delete &lt;n&gt;\n/reinstall &lt;n&gt; [image]\n\n<b>Expired</b>\n/renew &lt;n&gt; &lt;durasi&gt;\n/setexpire &lt;n&gt; &lt;durasi|tanggal|never&gt;\n/owner &lt;n&gt; &lt;label&gt;\n\n<b>Port</b>\n/portadd &lt;n&gt; &lt;tcp|udp|both&gt; &lt;jumlah&gt;\n/portdel &lt;n&gt; &lt;publik&gt;\n\n<b>Data</b>\n/snapshot &lt;n&gt; &lt;create|list|restore|delete&gt; [nama]\n/backup &lt;n&gt;\n/sync\n\n/cancel — batalkan input yang sedang aktif\n"""
+HELP = """<b>VPSNAT Bot</b>\n\n<b>Menu utama</b>: /start atau /menu\n\n<b>Read-only</b>\n/list — daftar VPS\n/info &lt;n&gt; — detail\n/stats &lt;n&gt; — resource CPU/RAM\n/ports &lt;n&gt; — port\n/host — info host ini\n/nodes — dashboard gabungan semua node\n/nodes list — daftar node terdaftar\n/expiring [hari] — segera expired\n\n<b>Kontrol</b>\n/start_vps &lt;n&gt;  /stop &lt;n&gt;  /restart &lt;n&gt;\n/suspend &lt;n&gt;  /unsuspend &lt;n&gt;\n/passwd &lt;n&gt; [password]\n/resize &lt;n&gt; &lt;cpu&gt; &lt;ram_mb&gt; &lt;disk_gb&gt;\n\n<b>Buat / hapus / clone</b>\n/create &lt;n&gt; &lt;image&gt; &lt;cpu&gt; &lt;ram&gt; &lt;disk&gt; &lt;expired&gt; [owner] [shared|dedicated]\n/clone &lt;sumber&gt; &lt;nama-baru&gt;\n/delete &lt;n&gt;\n/reinstall &lt;n&gt; [image]\n\n<b>Expired</b>\n/renew &lt;n&gt; &lt;durasi&gt;\n/setexpire &lt;n&gt; &lt;durasi|tanggal|never&gt;\n/owner &lt;n&gt; &lt;label&gt;\n/grace &lt;hari&gt; — masa tenggang sebelum auto-hapus\n\n<b>Port</b>\n/portadd &lt;n&gt; &lt;tcp|udp|both&gt; &lt;jumlah&gt; — port dialokasikan otomatis\n/portdel &lt;n&gt; &lt;publik&gt;\n\n<b>Bandwidth</b>\n/bandwidth &lt;n&gt; — kelola kuota &amp; kecepatan\n\n<b>Multi-node</b>\n/nodes add &lt;label&gt; &lt;ip-tunnel&gt;\n/nodes del &lt;label&gt;\n/publicip &lt;ip&gt;\n\n<b>Data</b>\n/snapshot &lt;n&gt; &lt;create|list|restore|delete&gt; [nama]\n/backup &lt;n&gt;\n/sync\n\n/cancel — batalkan input yang sedang aktif\n"""
 
 
 async def simple(update: Update, args: list[str], need_name: bool = True, label: str = "") -> None:
@@ -522,6 +543,72 @@ async def cmd_backup(update, ctx):
     rc, out = await run_action(ctx.args[0], ["backup", ctx.args[0]], "backup", timeout=1800)
     text, kb = await result_for_action(ctx.args[0], "Backup", rc, out)
     await reply(update, text, reply_markup=kb or back_keyboard())
+
+
+@admin_only
+async def cmd_clone(update, ctx):
+    a = ctx.args
+    if len(a) != 2 or not valid_name(a[0]) or not valid_name(a[1]):
+        await reply(update, "Pakai: /clone &lt;sumber&gt; &lt;nama-baru&gt;")
+        return
+    await reply(update, f"⏳ Clone {esc(a[0])} → {esc(a[1])}…")
+    rc, out = await run_action(a[0], ["clone", a[0], a[1]], "clone", {"NEWNAME": a[1]}, timeout=1800)
+    text, kb = await result_for_action(a[1], "Clone", rc, out, include_info=rc == 0)
+    await reply(update, text, reply_markup=kb or back_keyboard())
+
+
+@admin_only
+async def cmd_stats(update, ctx):
+    if not ctx.args or not valid_name(ctx.args[0]):
+        await reply(update, "Pakai: /stats &lt;n&gt;")
+        return
+    rc, out = await run_cli(["stats", ctx.args[0]])
+    text = f"📊 <b>Resource — {esc(ctx.args[0])}</b>\n{esc_pre(out)}" if rc == 0 else f"❌ <b>Stats</b>\n{esc_pre(out)}"
+    await reply(update, text, reply_markup=back_keyboard(f"vps:{ctx.args[0]}"))
+
+
+@admin_only
+async def cmd_nodes(update, ctx):
+    a = ctx.args
+    if not a:
+        rc, out = await run_cli(["nodes"], timeout=30)
+        text = f"🌐 <b>Multi-Node Dashboard</b>\n{esc_pre(out)}" if rc == 0 else f"❌ <b>Dashboard</b>\n{esc_pre(out)}"
+        await reply(update, text, reply_markup=back_keyboard())
+        return
+    sub = a[0]
+    if sub == "list":
+        rc, out = await run_cli(["nodes", "list"])
+    elif sub == "add" and len(a) >= 3:
+        rc, out = await run_action("__nodes__", ["nodes", "add", a[1], a[2]] + a[3:], "nodes-add")
+    elif sub == "del" and len(a) >= 2:
+        rc, out = await run_action("__nodes__", ["nodes", "del", a[1]], "nodes-del")
+    else:
+        await reply(update, "Pakai: /nodes | /nodes list | /nodes add &lt;label&gt; &lt;ip-tunnel&gt; | /nodes del &lt;label&gt;")
+        return
+    text = f"🌐 <b>Nodes</b>\n{esc_pre(out)}" if rc == 0 else f"❌ <b>Nodes</b>\n{esc_pre(out)}"
+    await reply(update, text, reply_markup=back_keyboard())
+
+
+@admin_only
+async def cmd_grace(update, ctx):
+    a = ctx.args
+    if not a or not a[0].isdigit():
+        await reply(update, "Pakai: /grace &lt;hari&gt;")
+        return
+    rc, out = await run_action("__host__", ["grace", a[0]], "grace")
+    text = f"✅ <b>Grace period</b>\n{esc_pre(out)}" if rc == 0 else f"❌ <b>Grace</b>\n{esc_pre(out)}"
+    await reply(update, text, reply_markup=back_keyboard())
+
+
+@admin_only
+async def cmd_publicip(update, ctx):
+    a = ctx.args
+    if not a:
+        await reply(update, "Pakai: /publicip &lt;ip&gt;")
+        return
+    rc, out = await run_action("__host__", ["publicip", a[0]], "publicip")
+    text = f"✅ <b>Public IP</b>\n{esc_pre(out)}" if rc == 0 else f"❌ <b>Public IP</b>\n{esc_pre(out)}"
+    await reply(update, text, reply_markup=back_keyboard())
 
 
 async def legacy_simple_name(update: Update, ctx, action: str, label: str, need_name: bool = True):
@@ -907,6 +994,18 @@ async def show_owner_menu(query, name: str) -> None:
     await edit(query, f"👤 <b>Owner {esc(name)}</b>\n\nPilih aksi:", reply_markup=kb)
 
 
+async def show_clone_menu(query, name: str) -> None:
+    kb = InlineKeyboardMarkup(
+        [[InlineKeyboardButton("❌ Batal", callback_data=f"vps:{name}")]]
+    )
+    set_state(query.from_user.id, "custom_clone", name=name)
+    await edit(
+        query,
+        f"🧬 <b>Clone {esc(name)}</b>\n\nKirim nama VPS baru (a-z0-9-, cpu/ram/disk/expired/owner/tipe ikut sumber).",
+        reply_markup=kb,
+    )
+
+
 async def show_portadd_menu(query, name: str) -> None:
     kb = InlineKeyboardMarkup(
         [
@@ -1069,6 +1168,9 @@ async def execute_button_action(query, action: str, name: str) -> None:
         text = f"📊 <b>Resource — {esc(name)}</b>\n{esc_pre(out)}"
         await edit(query, text, reply_markup=back_keyboard(f"vps:{name}"))
         return
+    if action == "clone":
+        await show_clone_menu(query, name)
+        return
 
 
 
@@ -1163,6 +1265,9 @@ async def on_button(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     data = query.data or ""
 
     try:
+        if data == "noop":
+            return
+
         if data.startswith("create:"):
             handled = await on_create_button(query, data.split(":") )
             if handled:
@@ -1182,6 +1287,12 @@ async def on_button(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         if data == "menu:host":
             rc, out = await run_cli(["host"])
             text = f"🖥️ <b>Host</b>\n{esc_pre(out)}" if rc == 0 else f"❌ <b>Host</b>\n{esc_pre(out)}"
+            await edit(query, text, reply_markup=back_keyboard())
+            return
+        if data == "menu:nodes":
+            await edit(query, "⏳ <b>Mengambil status semua node…</b>")
+            rc, out = await run_cli(["nodes"], timeout=30)
+            text = f"🌐 <b>Multi-Node Dashboard</b>\n{esc_pre(out)}" if rc == 0 else f"❌ <b>Dashboard</b>\n{esc_pre(out)}"
             await edit(query, text, reply_markup=back_keyboard())
             return
         if data == "menu:expiring":
@@ -1545,6 +1656,17 @@ async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             clear_state(uid)
             rc, out = await run_action(name, ["set-owner", name, label or "-"], "owner")
             text, kb = await result_for_action(name, "Owner", rc, out, include_info=rc == 0)
+            await reply(update, text, reply_markup=kb or back_keyboard(f"vps:{name}"))
+            return
+        if kind == "custom_clone":
+            name = state["name"]
+            if not valid_name(value):
+                await reply(update, "❌ Nama harus a-z, 0-9, dan '-' (maks. 31 karakter).")
+                return
+            clear_state(uid)
+            await reply(update, f"⏳ <b>Clone {esc(name)} → {esc(value)}</b>…")
+            rc, out = await run_action(name, ["clone", name, value], "clone", {"NEWNAME": value}, timeout=1800)
+            text, kb = await result_for_action(value, "Clone", rc, out, include_info=rc == 0)
             await reply(update, text, reply_markup=kb or back_keyboard(f"vps:{name}"))
             return
         if kind == "port_count":
@@ -1961,6 +2083,11 @@ def main() -> None:
         "unsuspend": cmd_unsuspend,
         "sync": cmd_sync,
         "backup": cmd_backup,
+        "clone": cmd_clone,
+        "stats": cmd_stats,
+        "nodes": cmd_nodes,
+        "grace": cmd_grace,
+        "publicip": cmd_publicip,
         "renew": cmd_renew,
         "setexpire": cmd_setexpire,
         "owner": cmd_owner,
@@ -1975,7 +2102,7 @@ def main() -> None:
     }
     for name, fn in handlers.items():
         app.add_handler(CommandHandler(name, fn))
-    app.add_handler(CallbackQueryHandler(on_button, pattern=r"^(?:menu|create|vps|vpsinfo|vpsstats|vpsbw|vpsplan|bwpreset|bwreset|setplan|act|danger|renew|resizecpu|resizeram|resizedisk|passwdgen|owner|portadd|portproto|portdel|ports|snapshot|snapcreate|snaprestore|snapdelete|snap|setexpire|reinstall|custom|ok|no):"))
+    app.add_handler(CallbackQueryHandler(on_button, pattern=r"^(?:noop$|(?:menu|create|vps|vpsinfo|vpsstats|vpsbw|vpsplan|bwpreset|bwreset|setplan|act|danger|renew|resizecpu|resizeram|resizedisk|passwdgen|owner|portadd|portproto|portdel|ports|snapshot|snapcreate|snaprestore|snapdelete|snap|setexpire|reinstall|custom|ok|no):)"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text), group=2)
     app.add_error_handler(on_error)
 

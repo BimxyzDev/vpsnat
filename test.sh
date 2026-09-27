@@ -24,6 +24,7 @@ source "$ROOT/vps.sh"
 source "$ROOT/expire.sh"
 source "$ROOT/resource.sh"
 source "$ROOT/data.sh"
+source "$ROOT/nodes.sh"
 source "$ROOT/install.sh"
 source "$ROOT/settings.sh"
 source "$ROOT/cli.sh"
@@ -61,5 +62,12 @@ parse_duration 30d >/dev/null
 
 VPSNAT_NONINTERACTIVE=1 settings_set shared-suspend-minutes 60 >/dev/null
 [[ "$(conf_get SHARED_SUSPEND_MINUTES)" == "60" ]]
+
+# nodes.sh: registry & brief summary format harus tetap 10 kolom pipe-delimited
+nodes_init
+node_add localtest 10.250.0.9 22 root >/dev/null 2>&1 || true
+brief=$(host_summary_brief)
+[[ "$(echo "$brief" | awk -F'|' '{print NF}')" -eq 10 ]]
+grep -q "^nodes_dispatch" "$ROOT/nodes.sh"
 
 printf 'All VPSNAT self-tests passed.\n'

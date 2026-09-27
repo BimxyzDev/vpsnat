@@ -19,6 +19,7 @@ vpsnat/
 ├── vps.sh
 ├── expire.sh
 ├── data.sh
+├── nodes.sh
 ├── bot.sh
 ├── install.sh
 ├── settings.sh
@@ -118,6 +119,53 @@ Versi 3.1 memasangkan satu relay ke satu NAT node. Beberapa NAT node dapat memak
 
 Target repository: `BimxyzDev/vpsnat`. Tree di repo sengaja dipecah per modul agar GitHub tidak bergantung pada satu file monolitik dan mudah dipelihara.
 
+## Multi-Node Dashboard
+
+Untuk deployment dengan beberapa node (misal: relay Linode + beberapa node NAT UpCloud/lainnya),
+`vpsnat nodes` memberi ringkasan gabungan tanpa perlu SSH satu-satu ke tiap server.
+
+Prasyarat: semua node terhubung ke **relay WireGuard yang sama** (lihat bagian Universal
+Network/Relay di atas), sehingga tiap node punya IP tunnel `10.250.0.x` yang bisa saling
+dijangkau tanpa membuka firewall publik. Dashboard menarik data lewat SSH ke IP tunnel
+tersebut — pastikan SSH key sudah ditukar (`ssh-copy-id`) antar node sebelum didaftarkan.
+
+Di tiap node, beri label agar mudah dikenali dashboard node lain:
+
+```bash
+vpsnat nodes label upcloud-01
+```
+
+Di node manapun (biasanya di relay/node utama), daftarkan node lain:
+
+```bash
+vpsnat nodes add upcloud-01 10.250.0.2
+vpsnat nodes add upcloud-02 10.250.0.3
+vpsnat nodes list
+```
+
+Lihat dashboard gabungan:
+
+```bash
+vpsnat nodes
+```
+
+Contoh output:
+
+```text
+=== VPSNAT Multi-Node Dashboard ===
+
+LABEL          IP               CPU   RAM          DISK         TOTAL  UP     SUSP
+---------------------------------------------------------------------------------
+local(lokal)   103.x.x.x        128   89635/1024000M 752/10000G  12     11     1
+upcloud-01     172.232.242.x    6     2100/15600M    6/638G      5      5      0
+---------------------------------------------------------------------------------
+Total gabungan: 17 VPS (16 running, 1 suspend)
+```
+
+Node yang tidak bisa dihubungi (mati/relay putus) ditandai `OFFLINE` dan tidak
+menggagalkan tampilan node lainnya. Dashboard yang sama juga tersedia lewat bot
+Telegram (`/nodes`) — hasilnya identik dengan CLI, cuma beda cara aksesnya.
+
 ## Install
 
 Ubuntu/Debian host dengan kernel dan privilege yang mendukung LXD direkomendasikan.
@@ -125,8 +173,15 @@ Ubuntu/Debian host dengan kernel dan privilege yang mendukung LXD direkomendasik
 ```bash
 git clone https://github.com/BimxyzDev/vpsnat.git
 cd vpsnat
-sudo ./vpsnat install
+sudo bash vpsnat install
 ```
+
+Dipanggil lewat `bash vpsnat ...` (bukan `./vpsnat ...`), jadi instalasi pertama tidak
+bergantung pada execute-bit file di git — tidak akan pernah kena `Permission denied` atau
+`command not found` walau clone dari mirror/zip yang mode filenya berubah. `cmd_install`
+otomatis mem-`chmod +x` seluruh `*.sh` + `vpsnat` di `/usr/local/lib/vpsnat` dan membuat
+symlink `/usr/local/bin/vpsnat`, jadi setelah instalasi pertama, command `vpsnat` biasa
+(tanpa `bash`/`./`) langsung berfungsi dari mana saja.
 
 Setelah install:
 

@@ -3,8 +3,12 @@
 install_runtime_tree() {
   local src="${VPSNAT_APP_DIR}" stage
   [[ -d "$src" ]] || die "Source aplikasi tidak ditemukan: $src"
+  # Self-heal: git kadang menyimpan file ini dengan mode 644 (mis. commit pertama lewat
+  # GitHub web UI, atau clone dari mirror/zip). Selalu pastikan executable di source SEBELUM
+  # dicopy, supaya instalasi jalan walau dipanggil lewat `bash vpsnat install` tanpa execute-bit.
+  find "$src" -maxdepth 1 -type f -name '*.sh' -exec chmod 755 {} + 2>/dev/null || true
+  chmod 755 "$src/vpsnat" 2>/dev/null || true
   if [[ "$(realpath "$src")" == "$(realpath "$INSTALL_DIR" 2>/dev/null || true)" ]]; then
-    chmod +x "$src/vpsnat"
     return 0
   fi
   stage="${INSTALL_DIR}.new"
