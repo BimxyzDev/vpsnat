@@ -595,8 +595,10 @@ def host_info():
     du = shutil.disk_usage("/")
     rows = read_db()
     states = lxc_states()
+    c = conf()
     return {
         "public_ip": public_ip(),
+        "web": {"domain": c.get("WEB_DOMAIN", ""), "port": to_int(c.get("WEB_PORT")) or 8787, "bind": c.get("WEB_BIND") or "0.0.0.0"},
         "cores": os.cpu_count() or 0,
         "load": [round(x, 2) for x in os.getloadavg()],
         "ram": {"total": mem.get("MemTotal", 0), "avail": mem.get("MemAvailable", 0)},
@@ -688,11 +690,18 @@ def logout(req):
     return {"ok": True}
 
 
+def branding():
+    c = conf()
+    logo = c.get("WEB_LOGO_URL", "")
+    return {"brand": (c.get("WEB_BRAND") or "VPSNAT")[:40], "logo": logo if logo.startswith("https://") else ""}
+
+
 @route("GET", "/api/session")
 def session_info(req):
+    base = {"ok": True, **branding()}
     if not req.auth:
-        return {"ok": True, "role": None}
-    return {"ok": True, "role": req.auth["role"], "name": req.auth.get("name")}
+        return {**base, "role": None}
+    return {**base, "role": req.auth["role"], "name": req.auth.get("name")}
 
 
 # ----- shared ops -----
@@ -1019,8 +1028,10 @@ class Handler(BaseHTTPRequestHandler):
         sys.stderr.write("%s %s\n" % (self.client_ip(), fmt % args))
 
     def client_ip(self):
-        if conf().get("WEB_TRUST_PROXY") == "1":
-            fwd = self.headers.get("CF-Connecting-IP") or (self.headers.get("X-Forwarded-For") or "").split(",")[0].strip()
+        c = conf()
+        if c.get("WEB_TRUST_PROXY") == "1":
+            header = c.get("WEB_IP_HEADER") or "X-Forwarded-For"
+            fwd = (self.headers.get(header) or "").split(",")[-1].strip()
             if fwd:
                 return fwd[:64]
         return self.client_address[0]
@@ -1063,7 +1074,11 @@ class Handler(BaseHTTPRequestHandler):
         return s
 
     def security_headers(self, nonce=None):
-        csp = "default-src 'none'; connect-src 'self'; img-src 'self' data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+        csp = (
+            "default-src 'none'; connect-src 'self'; img-src 'self' data: https:; "
+            "style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; "
+            "base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+        )
         if nonce:
             csp += f"; script-src 'nonce-{nonce}'"
         self.send_header("Content-Security-Policy", csp)
@@ -1071,6 +1086,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("X-Frame-Options", "DENY")
         self.send_header("Referrer-Policy", "no-referrer")
         self.send_header("Cache-Control", "no-store")
+        if self.is_https():
+            self.send_header("Strict-Transport-Security", "max-age=31536000")
 
     def send_bytes(self, status, ctype, data, extra=None, nonce=None):
         self.send_response(status)

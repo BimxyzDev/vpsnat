@@ -74,7 +74,9 @@ Bot Telegram
 
 Web Panel (UI + API)
   web-setup [port] [admin_user] [admin_pass]
-  web [on|off|restart|status|logs|key|passwd|remove]
+  web [on|off|restart|status|logs|key|passwd|domain|remove]
+  web-domain <domain> [nginx|tunnel] [email]   HTTPS lewat nginx+Let's Encrypt, atau Cloudflare Tunnel
+  web-domain [status|remove]
 
 Relay / Universal Network
   relay init
@@ -122,7 +124,7 @@ menu() {
     echo -e " ${W}Data/System${N}"; echo " 19 Snapshot   20 Backup      21 Restore    22 Stats"
     echo " 23 Host       24 Sync        25 Public IP 26 Reapply FW"
     echo " 35 Monitor    36 Bot setup   37 Bot control 38 Virtualization"
-    echo " 39 Multi-node dashboard  40 Web setup  41 Web control"
+    echo " 39 Multi-node dashboard  40 Web setup  41 Web control  42 Web domain"
     echo "  0 Exit"
     echo
     local c a
@@ -132,7 +134,7 @@ menu() {
       14) port_add;; 15) port_del;; 16) port_list;; 17) vps_bandwidth;; 18) vps_limits_io;;
       19) snap_menu;; 20) vps_backup;; 21) vps_restore;; 22) vps_stats;; 23) host_stats;; 24) vps_sync;; 25) set_public_ip;; 26) apply_all_rules && ok "Rule diterapkan.";;
       27) vps_renew;; 28) vps_setexpire;; 29) vps_expiring;; 30) vps_suspend;; 31) vps_unsuspend;; 32) vps_setowner;; 33) set_grace;; 34) vps_expire_check && ok "Expire check selesai.";;
-      35) read -rp "on/off/restart/status/logs: " a; monitor_ctl "$a";; 36) bot_setup;; 37) read -rp "on/off/restart/status/logs/remove: " a; bot_ctl "$a";; 38) cmd_check;; 39) nodes_dashboard;; 40) web_setup;; 41) read -rp "on/off/restart/status/logs/key/passwd/remove: " a; web_ctl "$a";; 0) exit 0;; *) warn "Pilihan tidak valid.";;
+      35) read -rp "on/off/restart/status/logs: " a; monitor_ctl "$a";; 36) bot_setup;; 37) read -rp "on/off/restart/status/logs/remove: " a; bot_ctl "$a";; 38) cmd_check;; 39) nodes_dashboard;; 40) web_setup;; 41) read -rp "on/off/restart/status/logs/key/passwd/remove: " a; web_ctl "$a";; 42) read -rp "Domain (kosong=status): " a; web_domain "$a";; 0) exit 0;; *) warn "Pilihan tidak valid.";;
     esac
     pause
   done
@@ -149,7 +151,7 @@ main() {
         "") menu;; create) vps_create "$@";; list|ls) vps_list;; info) vps_info "$@";; start) vps_start "$@";; stop) vps_stop "$@";; restart) vps_restart "$@";; console|shell) vps_console "$@";; exec) vps_exec "$@";; delete|rm) vps_delete "$@";; resize) vps_resize "$@";; passwd) vps_passwd "$@";; reinstall) vps_reinstall "$@";; clone) vps_clone "$@";; set-type) vps_set_plan "$@";;
         renew) vps_renew "$@";; set-expire) vps_setexpire "$@";; expiring) vps_expiring "$@";; suspend) vps_suspend "$@";; unsuspend) vps_unsuspend "$@";; set-owner) vps_setowner "$@";; grace) set_grace "$@";; expire-check) vps_expire_check;;
         port-add) port_add "$@";; port-range) port_range_add "$@";; port-del) port_del "$@";; port-list) port_list "$@";; bandwidth|bw) vps_bandwidth "$@";; resource-check) resource_check;; monitor) monitor_ctl "$@";; monitor-loop) monitor_loop;; settings|config) settings_cmd "$@";;
-        snapshot|snap) snap_menu "$@";; backup) vps_backup "$@";; restore-backup) vps_restore "$@";; limits) vps_limits_io "$@";; stats) vps_stats "$@";; host) host_stats;; host-brief) host_summary_brief;; sync) vps_sync;; restore) apply_all_rules;; publicip) set_public_ip "$@";; bot-setup) bot_setup "$@";; bot) bot_ctl "$@";; web-setup) web_setup "$@";; web) web_ctl "$@";; nodes) nodes_dispatch "$@";; *) show_help; return 1;;
+        snapshot|snap) snap_menu "$@";; backup) vps_backup "$@";; restore-backup) vps_restore "$@";; limits) vps_limits_io "$@";; stats) vps_stats "$@";; host) host_stats;; host-brief) host_summary_brief;; sync) vps_sync;; restore) apply_all_rules;; publicip) set_public_ip "$@";; bot-setup) bot_setup "$@";; bot) bot_ctl "$@";; web-setup) web_setup "$@";; web) web_ctl "$@";; web-domain) web_domain "$@";; nodes) nodes_dispatch "$@";; *) show_help; return 1;;
       esac
       ;;
   esac

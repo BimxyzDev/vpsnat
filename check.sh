@@ -6,6 +6,7 @@ BIN=${VPSNAT_BIN:-/usr/local/bin/vpsnat}
 echo "== service =="
 systemctl is-active vpsnat-monitor.service 2>/dev/null || true
 systemctl is-active vpsnat-expire.timer 2>/dev/null || true
+systemctl is-active vpsnat-web.service 2>/dev/null || true
 echo "== CLI check =="
 "$BIN" check
 echo "== DB =="

@@ -21,3 +21,10 @@ WEB_API_KEY=
 # 1 jika di belakang reverse proxy/tunnel TLS (baca IP klien dari X-Forwarded-For & tandai cookie Secure)
 WEB_TRUST_PROXY=0
 WEB_SESSION_HOURS=12
+# Domain + HTTPS (diatur oleh: vpsnat web-domain)
+WEB_DOMAIN=
+# header IP klien saat WEB_TRUST_PROXY=1: X-Forwarded-For (nginx) atau CF-Connecting-IP (Cloudflare Tunnel)
+WEB_IP_HEADER=X-Forwarded-For
+# Tampilan
+WEB_BRAND=VPSNAT
+WEB_LOGO_URL=

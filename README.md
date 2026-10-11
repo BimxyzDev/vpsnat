@@ -1,6 +1,22 @@
 # VPSNAT Manager
 
-VPSNAT adalah manager VPS berbasis LXD + Linux NAT untuk provisioning, port forwarding, resource control, bandwidth quota, bandwidth shaping, expiry, dan administrasi Telegram.
+VPSNAT adalah manager VPS berbasis LXD + Linux NAT untuk provisioning, port forwarding, resource control, bandwidth quota, bandwidth shaping, expiry, administrasi Telegram, dan **web panel** (UI + REST API) dengan dukungan domain + HTTPS.
+
+## Fitur
+
+- Provisioning VPS container/VM (LXD) dengan NAT, port forwarding otomatis, dan quota bandwidth
+- Model shared vs dedicated, auto-suspend, expiry, snapshot, dan relay WireGuard
+- Multi-node dashboard
+- Bot Telegram untuk admin
+- **Web panel**: login admin dan user, resource live, reinstall, ganti password, REST API admin
+- **Domain + HTTPS** otomatis (nginx + Let's Encrypt) atau Cloudflare Tunnel
+
+## Requirement
+
+- Ubuntu/Debian dengan akses root dan kernel yang mendukung LXD
+- Python 3.8+ (untuk bot dan web panel; web panel tidak butuh paket pip)
+- Port publik inbound dari provider (atau relay WireGuard)
+- Opsional: domain yang A record-nya mengarah ke host untuk HTTPS
 
 ## Struktur
 
@@ -25,7 +41,11 @@ vpsnat/
 ├── settings.sh
 ├── cli.sh
 ├── bot.py
+├── web.sh
+├── web.py
+├── web.html
 ├── test.sh
+├── test_web.py
 ├── check.sh
 ├── vpsnat-monitor.service
 ├── vpsnat-restore.service
@@ -34,6 +54,7 @@ vpsnat/
 ├── ci.yml.example
 ├── config.example
 ├── .gitignore
+├── CHANGELOG.md
 ├── LICENSE
 └── README.md
 ```
@@ -193,6 +214,107 @@ vpsnat host
 vpsnat monitor status
 ```
 
+## Web panel
+
+Web panel adalah UI + REST API di atas CLI `vpsnat`. Logika provisioning tetap di modul Bash; `web.py` hanya memanggil CLI, jadi perilaku CLI, bot, dan web selalu sama. Hanya memakai stdlib Python (tanpa pip/venv).
+
+### Setup
+
+```bash
+sudo vpsnat web-setup            # tanya port, username admin, password
+sudo vpsnat web-setup 8787 admin 'PasswordKuat123'   # non-interaktif
+sudo vpsnat web status
+```
+
+Setup membuat service `vpsnat-web`, hash password admin (scrypt), dan **API key** (ditampilkan sekali). Port harus 1024-65535 dan tidak boleh masuk range port VPS (`PORT_MIN-PORT_MAX`). Jika memakai `ufw`: `ufw allow 8787/tcp`.
+
+Kelola: `vpsnat web [on|off|restart|status|logs|key|passwd|domain|remove]`
+
+### Login
+
+| Peran | Cara login |
+|-------|-----------|
+| Admin | Username + password dari `web-setup` (UI), atau header `Authorization: Bearer <API key>` (API) |
+| User | Nama VPS **atau** port SSH + password root VPS |
+
+User bisa melihat info/port/SSH, resource live (CPU, RAM, disk, bandwidth), start/stop/restart, ganti password, dan reinstall (wajib mengetik nama VPS). Admin bisa semuanya plus create, delete, suspend, resize, renew, expire, owner, plan, bandwidth, port, settings, sync, dan dashboard multi-node.
+
+### Domain + HTTPS
+
+```bash
+# A record panel.contoh.com -> IP publik host, port 80/443 terbuka
+sudo vpsnat web-domain panel.contoh.com nginx admin@contoh.com
+sudo vpsnat web-domain status
+sudo vpsnat web-domain remove
+```
+
+Mode `nginx` memasang nginx + certbot, membuat reverse proxy ke `127.0.0.1:<port>`, meminta sertifikat Let's Encrypt, lalu mengunci panel ke localhost (`WEB_BIND=127.0.0.1`, `WEB_TRUST_PROXY=1`). Aman dipasang berdampingan dengan nginx yang sudah ada (misal Pterodactyl) karena memakai `server_name` sendiri.
+
+Mode `tunnel` untuk Cloudflare Tunnel: panel hanya mendengar di localhost dan membaca IP klien dari `CF-Connecting-IP`.
+
+```bash
+sudo vpsnat web-domain panel.contoh.com tunnel
+# lalu tambahkan ingress di cloudflared: hostname panel.contoh.com -> http://127.0.0.1:8787
+```
+
+### Tampilan
+
+Tema light dengan aksen biru `#2563eb` dan font Inter. Nama dan logo bisa diganti di `/etc/vpsnat/vpsnat.conf`:
+
+```text
+WEB_BRAND=Bimxyz Official
+WEB_LOGO_URL=https://contoh.com/logo.png
+```
+
+Lalu `vpsnat web restart`. Font memakai Google Fonts dengan fallback ke font sistem.
+
+### API admin
+
+```bash
+KEY=<API key>
+curl -H "Authorization: Bearer $KEY" https://panel.contoh.com/api/admin/vps
+curl -H "Authorization: Bearer $KEY" https://panel.contoh.com/api/admin/vps/myvps/resources
+curl -X POST -H "Authorization: Bearer $KEY" -d '{"action":"restart"}' \
+  https://panel.contoh.com/api/admin/vps/myvps/action
+curl -X POST -H "Authorization: Bearer $KEY" \
+  -d '{"name":"demo","cpu":2,"ram":2048,"disk":20,"image":"ubuntu22","plan":"shared","expire":"30d"}' \
+  https://panel.contoh.com/api/admin/vps
+```
+
+| Method | Path | Keterangan |
+|--------|------|-----------|
+| GET | `/api/admin/host` | info host dan hitungan VPS |
+| GET / POST | `/api/admin/vps` | daftar / buat VPS (job) |
+| GET / DELETE | `/api/admin/vps/{n}` | detail + password / hapus (job) |
+| GET | `/api/admin/vps/{n}/resources` | CPU, RAM, disk, network |
+| POST | `/api/admin/vps/{n}/action` | `start` `stop` `restart` `suspend` `unsuspend` |
+| POST | `/api/admin/vps/{n}/reinstall` | `{image}` (job) |
+| POST | `/api/admin/vps/{n}/passwd` | `{password?}` kosong = random |
+| POST | `/api/admin/vps/{n}/resize` | `{cpu, ram, disk}` |
+| POST | `/api/admin/vps/{n}/renew` | `{duration}` contoh `30d` |
+| POST | `/api/admin/vps/{n}/expire` | `{value}` contoh `2026-12-31`, `never` |
+| POST | `/api/admin/vps/{n}/owner` | `{owner}` |
+| POST | `/api/admin/vps/{n}/plan` | `{plan}` `shared` / `dedicated` |
+| POST | `/api/admin/vps/{n}/bandwidth` | `{action: set/limit/reset, quota_gb, rate_mbit}` |
+| POST / DELETE | `/api/admin/vps/{n}/ports[/{port}]` | `{proto, count}` / hapus port |
+| GET / POST | `/api/admin/settings` | lihat / ubah setting |
+| POST | `/api/admin/sync` | sinkronkan DB dengan LXD |
+| GET | `/api/admin/nodes` | dashboard multi-node |
+| GET | `/api/admin/jobs[/{id}]` | status job |
+
+Operasi panjang (create, delete, reinstall) mengembalikan `202 {"job":"<id>"}`; polling `/api/admin/jobs/<id>` sampai `status` bukan `running`. Respons selalu JSON `{"ok": true|false, ...}`; error berisi `error`.
+
+### Keamanan web panel
+
+- Password admin di-hash scrypt; API key minimal 32 karakter.
+- Login dibatasi 5 gagal per IP per 15 menit (per VPS 20), sesi HttpOnly + SameSite=Strict, sesi user dicabut saat password VPS berubah.
+- Request mutasi lewat cookie wajib header `X-Requested-With: vpsnat` (proteksi CSRF); API key tidak memakai cookie.
+- CSP ketat, `X-Frame-Options: DENY`, HSTS saat HTTPS.
+- Input divalidasi ketat dan CLI dipanggil tanpa shell.
+- **Jangan expose tanpa HTTPS.** Tanpa TLS, password lewat jaringan dalam bentuk plaintext. Pakai `vpsnat web-domain` atau reverse proxy TLS sendiri.
+- Login user memakai password root VPS yang tersimpan di DB. Jika password diubah langsung dari dalam VPS (`passwd`), DB tidak ikut berubah dan login panel gagal; ganti lewat panel atau CLI.
+- Sesi disimpan di memori; restart service membuat semua sesi logout.
+
 ## Telegram bot
 
 ```bash
@@ -201,6 +323,22 @@ sudo vpsnat bot status
 ```
 
 Bot memakai `python-telegram-bot` di virtualenv `/etc/vpsnat/bot/venv` dan hanya menjadi UI untuk CLI. Logika provisioning tetap berada di modul Bash.
+
+## Upgrade
+
+```bash
+cd vpsnat && git pull
+sudo bash vpsnat upgrade
+```
+
+Upgrade menyalin ulang semua modul, menjalankan migrasi DB, dan me-restart bot serta web panel jika terpasang.
+
+## Testing
+
+```bash
+./test.sh        # syntax Bash/Python, unit CLI, dan smoke test API web (CLI/LXC palsu)
+python3 test_web.py
+```
 
 ## Monitoring
 
@@ -242,6 +380,7 @@ Database versi lama tetap digunakan. Saat startup/install/upgrade, field tambaha
 - File DB/config diberi mode `0600`.
 - Operasi yang memodifikasi DB memakai `flock`.
 - Bot hanya menerima user dalam `TG_ADMIN`.
+- Web panel: lihat bagian *Keamanan web panel*. Jangan commit `vpsnat.conf` atau `vps.db` (sudah ada di `.gitignore`).
 - Token callback bot mempunyai TTL.
 - Password VPS masih tersimpan pada DB untuk kompatibilitas CLI lama; untuk deployment publik, batasi permission host dengan ketat.
 

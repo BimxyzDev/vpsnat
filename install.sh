@@ -138,6 +138,7 @@ cmd_uninstall() {
   iptables -t nat -F VPSNAT_PRE 2>/dev/null || true; iptables -t nat -F VPSNAT_POST 2>/dev/null || true; iptables -F VPSNAT_FWD 2>/dev/null || true
   lxc profile delete "$PROFILE" 2>/dev/null || true; lxc network delete "$BRIDGE" 2>/dev/null || true; lxc storage delete "$POOL" 2>/dev/null || true
   systemctl disable --now vpsnat-restore.service 2>/dev/null || true; systemctl disable --now "${EXPIRE_TIMER}.timer" 2>/dev/null || true; systemctl disable --now "${MONITOR_SERVICE}.service" 2>/dev/null || true; systemctl disable --now "${BOT_SERVICE}.service" 2>/dev/null || true; systemctl disable --now "${WEB_SERVICE}.service" 2>/dev/null || true
+  web_nginx_remove
   rm -f /etc/systemd/system/vpsnat-restore.service "/etc/systemd/system/${EXPIRE_TIMER}.service" "/etc/systemd/system/${EXPIRE_TIMER}.timer" "/etc/systemd/system/${MONITOR_SERVICE}.service" "/etc/systemd/system/${BOT_SERVICE}.service" "/etc/systemd/system/${WEB_SERVICE}.service" "$BIN_PATH"
   rm -rf "$INSTALL_DIR" "$BASE_DIR"
   systemctl daemon-reload

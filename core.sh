@@ -2,7 +2,7 @@
 
 set -uo pipefail
 
-VERSION="3.1.0"
+VERSION="3.2.0"
 APP_NAME="vpsnat"
 BASE_DIR="${VPSNAT_BASE_DIR:-/etc/vpsnat}"
 DB_FILE="${BASE_DIR}/vps.db"
@@ -31,6 +31,8 @@ BOT_SERVICE="vpsnat-bot"
 WEB_DIR="${BASE_DIR}/web"
 WEB_SERVICE="vpsnat-web"
 WEB_PORT_DEFAULT=8787
+WEB_NGINX_SITE="/etc/nginx/sites-available/vpsnat-web.conf"
+WEB_NGINX_LINK="/etc/nginx/sites-enabled/vpsnat-web.conf"
 EXPIRE_TIMER="vpsnat-expire"
 MONITOR_SERVICE="vpsnat-monitor"
 GRACE_DAYS_DEFAULT=3

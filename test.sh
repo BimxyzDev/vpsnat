@@ -5,7 +5,7 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 for f in "$ROOT/vpsnat" "$ROOT"/*.sh; do
   bash -n "$f"
 done
-python3 -m py_compile "$ROOT/bot.py"
+python3 -m py_compile "$ROOT/bot.py" "$ROOT/web.py" "$ROOT/test_web.py"
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
@@ -25,6 +25,7 @@ source "$ROOT/expire.sh"
 source "$ROOT/resource.sh"
 source "$ROOT/data.sh"
 source "$ROOT/nodes.sh"
+source "$ROOT/web.sh"
 source "$ROOT/install.sh"
 source "$ROOT/settings.sh"
 source "$ROOT/cli.sh"
@@ -69,5 +70,16 @@ node_add localtest 10.250.0.9 22 root >/dev/null 2>&1 || true
 brief=$(host_summary_brief)
 [[ "$(echo "$brief" | awk -F'|' '{print NF}')" -eq 10 ]]
 grep -q "^nodes_dispatch" "$ROOT/nodes.sh"
+
+# web panel: validator domain, hash password, smoke test API
+web_domain_valid panel.example.com
+web_domain_valid sub.panel.example.co.id
+! web_domain_valid 'bad domain'
+! web_domain_valid 'a_b.example.com'
+! web_domain_valid 'localhost'
+! web_domain_valid '-x.example.com'
+[[ "$(printf 'secret123' | python3 "$ROOT/web.py" hashpw)" == scrypt:* ]]
+grep -q 'cpu="${CPU:-}"; ask cpu' "$ROOT/vps.sh"
+python3 "$ROOT/test_web.py" >/dev/null
 
 printf 'All VPSNAT self-tests passed.\n'
