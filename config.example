@@ -12,3 +12,12 @@ RELAY_WG_PORT=51820
 # Telegram bot (set by: vpsnat bot-setup)
 TG_TOKEN=
 TG_ADMIN=
+# Web panel (set by: vpsnat web-setup)
+WEB_PORT=8787
+WEB_BIND=0.0.0.0
+WEB_ADMIN_USER=admin
+WEB_ADMIN_HASH=
+WEB_API_KEY=
+# 1 jika di belakang reverse proxy/tunnel TLS (baca IP klien dari X-Forwarded-For & tandai cookie Secure)
+WEB_TRUST_PROXY=0
+WEB_SESSION_HOURS=12

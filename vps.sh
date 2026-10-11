@@ -74,9 +74,9 @@ vps_create() {
   img=$(image_for "${img_key:-ubuntu22}")
   if [[ "$vtype" == "vm" && "$img" == images:alpine/* ]]; then warn "Alpine VM kurang stabil, pakai ubuntu22."; img="ubuntu:22.04"; fi
 
-  CPU="${CPU:-}"; ask cpu "CPU core [1]: " 1
-  RAM="${RAM:-}"; ask ram "RAM MB [1024]: " 1024
-  DISK="${DISK:-}"; ask disk "Disk GB [10]: " 10
+  cpu="${CPU:-}"; ask cpu "CPU core [1]: " 1
+  ram="${RAM:-}"; ask ram "RAM MB [1024]: " 1024
+  disk="${DISK:-}"; ask disk "Disk GB [10]: " 10
   [[ "$cpu" =~ ^[0-9]+$ && "$ram" =~ ^[0-9]+$ && "$disk" =~ ^[0-9]+$ ]] || { err "CPU/RAM/Disk harus angka."; return 1; }
   (( cpu >= 1 && ram >= 128 && disk >= 1 )) || { err "Minimal 1 CPU, 128 MB RAM, 1 GB disk."; return 1; }
 

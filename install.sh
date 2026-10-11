@@ -110,7 +110,7 @@ cmd_install() {
   apply_all_rules
   ok "Install v${VERSION} selesai."
   info "CLI: vpsnat | Monitor: ${MONITOR_SERVICE} | Expire: ${EXPIRE_TIMER}.timer"
-  info "Bot opsional: vpsnat bot-setup"
+  info "Bot opsional: vpsnat bot-setup | Web panel opsional: vpsnat web-setup"
 }
 
 cmd_upgrade() {
@@ -123,6 +123,7 @@ cmd_upgrade() {
   systemctl enable --now "${EXPIRE_TIMER}.timer" >/dev/null 2>&1 || true
   systemctl enable --now "${MONITOR_SERVICE}.service" >/dev/null 2>&1 || true
   if [[ -f "${BOT_DIR}/bot.py" ]]; then bot_write_files || true; bot_write_unit; systemctl restart "${BOT_SERVICE}.service" 2>/dev/null || true; fi
+  if [[ -f "${WEB_DIR}/web.py" ]]; then web_write_files || true; web_write_unit; systemctl restart "${WEB_SERVICE}.service" 2>/dev/null || true; fi
   bandwidth_sync_all
   apply_all_rules
   ok "Upgrade ke v${VERSION} selesai. DB lama dimigrasikan ke schema ${DB_FIELDS} field."
@@ -136,8 +137,8 @@ cmd_uninstall() {
   while IFS= read -r name; do [[ -n "$name" ]] && lxc delete "$name" --force 2>/dev/null || true; done < <(lxc list -c n --format csv 2>/dev/null)
   iptables -t nat -F VPSNAT_PRE 2>/dev/null || true; iptables -t nat -F VPSNAT_POST 2>/dev/null || true; iptables -F VPSNAT_FWD 2>/dev/null || true
   lxc profile delete "$PROFILE" 2>/dev/null || true; lxc network delete "$BRIDGE" 2>/dev/null || true; lxc storage delete "$POOL" 2>/dev/null || true
-  systemctl disable --now vpsnat-restore.service 2>/dev/null || true; systemctl disable --now "${EXPIRE_TIMER}.timer" 2>/dev/null || true; systemctl disable --now "${MONITOR_SERVICE}.service" 2>/dev/null || true; systemctl disable --now "${BOT_SERVICE}.service" 2>/dev/null || true
-  rm -f /etc/systemd/system/vpsnat-restore.service "/etc/systemd/system/${EXPIRE_TIMER}.service" "/etc/systemd/system/${EXPIRE_TIMER}.timer" "/etc/systemd/system/${MONITOR_SERVICE}.service" "/etc/systemd/system/${BOT_SERVICE}.service" "$BIN_PATH"
+  systemctl disable --now vpsnat-restore.service 2>/dev/null || true; systemctl disable --now "${EXPIRE_TIMER}.timer" 2>/dev/null || true; systemctl disable --now "${MONITOR_SERVICE}.service" 2>/dev/null || true; systemctl disable --now "${BOT_SERVICE}.service" 2>/dev/null || true; systemctl disable --now "${WEB_SERVICE}.service" 2>/dev/null || true
+  rm -f /etc/systemd/system/vpsnat-restore.service "/etc/systemd/system/${EXPIRE_TIMER}.service" "/etc/systemd/system/${EXPIRE_TIMER}.timer" "/etc/systemd/system/${MONITOR_SERVICE}.service" "/etc/systemd/system/${BOT_SERVICE}.service" "/etc/systemd/system/${WEB_SERVICE}.service" "$BIN_PATH"
   rm -rf "$INSTALL_DIR" "$BASE_DIR"
   systemctl daemon-reload
   ok "Uninstall selesai."
