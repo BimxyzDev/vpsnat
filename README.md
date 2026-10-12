@@ -100,6 +100,8 @@ vpsnat port-add myvps tcp 10
 
 VPSNAT mencari range kontigu kosong, misalnya `20010-20019`, lalu melakukan mapping port publik ke port internal yang sama.
 
+Saat membuat VPS, **jumlah port total** adalah 2-50 (default 3) dan sudah termasuk 1 port SSH. Contoh: `ports=6` → 1 port SSH + 5 port aplikasi (masing-masing TCP+UDP). Batas ini diatur oleh `VPS_PORTS_MAX` di `core.sh` (dan `PORTS_MAX` di `web.py`; ubah keduanya bersamaan). Port tambahan setelah VPS dibuat memakai `port-add` (1-500 per perintah).
+
 ## Universal Network / Relay
 
 VPSNAT tidak mengunci provider. Mode `direct` memakai public IPv4 dan port inbound yang diberikan provider. Untuk VPS yang inbound-nya dibatasi provider, gunakan VPS relay yang dapat menerima trafik publik lalu meneruskannya melalui WireGuard.
@@ -225,6 +227,8 @@ sudo vpsnat web-setup            # tanya port, username admin, password
 sudo vpsnat web-setup 8787 admin 'PasswordKuat123'   # non-interaktif
 sudo vpsnat web status
 ```
+
+**Update panel setelah `git pull`:** jalankan `sudo bash vpsnat upgrade` dari folder repo. Perintah ini menyalin ulang `web.py` dan `web.html` ke `/etc/vpsnat/web/` lalu me-restart `vpsnat-web`. Mengedit file di folder repo saja tidak mengubah panel yang sedang berjalan, karena server membaca `web.html` dari `/etc/vpsnat/web/`.
 
 Setup membuat service `vpsnat-web`, hash password admin (scrypt), dan **API key** (ditampilkan sekali). Port harus 1024-65535 dan tidak boleh masuk range port VPS (`PORT_MIN-PORT_MAX`). Jika memakai `ufw`: `ufw allow 8787/tcp`.
 

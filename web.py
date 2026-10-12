@@ -638,7 +638,10 @@ def route(method, pattern, role=None):
     return deco
 
 
-NAME = r"(?P<name>[a-z0-9][a-z0-9-]{0,30})"
+# Nama VPS baru dibatasi ketat oleh v_name(); route menerima nama lebih longgar agar VPS hasil
+# `sync`/import (huruf besar, titik, underscore) tetap bisa dibuka. Keberadaan nama tetap dicek ke DB.
+NAME = r"(?P<name>[A-Za-z0-9][A-Za-z0-9._-]{0,62})"
+PORTS_MIN, PORTS_MAX = 2, 50  # total port saat membuat VPS (termasuk 1 port SSH); samakan dengan VPS_PORTS_MAX di core.sh
 
 
 # ----- auth -----
@@ -668,11 +671,13 @@ def login_user(req):
     password = str(b.get("password", ""))[:200]
     row = None
     for r in read_db():
-        if r["name"] == ident or (ident.isdigit() and r["ssh"] == int(ident)):
+        if r["name"] == ident or (ident.isascii() and ident.isdigit() and r["ssh"] == int(ident)):
             row = r
             break
-    expected = row["password"] if row else "x" * 16
-    ok = hmac.compare_digest(password.encode(), expected.encode()) and row is not None
+    # VPS hasil `sync` memakai password placeholder "unknown"; password kosong/placeholder tidak boleh bisa login.
+    usable = row is not None and row["password"] not in ("", "-", "unknown")
+    expected = row["password"] if usable else "x" * 16
+    ok = usable and bool(password) and hmac.compare_digest(password.encode(), expected.encode())
     if not ok:
         fail(f"ip:{req.ip}", f"id:{ident}")
         raise ApiError(401, "VPS atau password salah.")
@@ -772,7 +777,9 @@ def me_passwd(req):
 @route("POST", "/api/me/reinstall", "user")
 def me_reinstall(req):
     name = req.auth["name"]
-    need_row(name)
+    r = need_row(name)
+    if r["suspended"] == 1 or r["quota_susp"] == 1:
+        raise ApiError(403, "VPS sedang disuspend atau kuota bandwidth habis. Hubungi admin.")
     if req.body.get("confirm") != name:
         raise ApiError(422, "Ketik nama VPS untuk konfirmasi.")
     return do_reinstall(req, name, v_choice(req.body.get("image", "ubuntu22"), IMAGES, "image"))
@@ -797,7 +804,11 @@ def a_host(req):
 @route("GET", "/api/admin/vps", "admin")
 def a_list(req):
     states = lxc_states()
-    return {"ok": True, "vps": [vps_view(r, states, admin=True) for r in read_db()]}
+    return {
+        "ok": True,
+        "vps": [vps_view(r, states, admin=True) for r in read_db()],
+        "limits": {"ports_min": PORTS_MIN, "ports_max": PORTS_MAX},
+    }
 
 
 @route("GET", rf"/api/admin/vps/{NAME}", "admin")
@@ -823,7 +834,7 @@ def a_create(req):
         "CPU": v_int(b, "cpu", 1, 1, 128),
         "RAM": v_int(b, "ram", 1024, 128, 1048576),
         "DISK": v_int(b, "disk", 10, 1, 10000),
-        "NPORTS": v_int(b, "ports", 3, 2, 10),
+        "NPORTS": v_int(b, "ports", 3, PORTS_MIN, PORTS_MAX),
         "PLAN_TYPE": v_choice(b.get("plan", "shared"), ("shared", "dedicated"), "plan"),
         "VTYPE": "2" if v_choice(b.get("backend", "container"), ("container", "vm"), "backend") == "vm" else "1",
         "EXPIRE": v_dur(b.get("expire", "0")),
@@ -951,9 +962,11 @@ def a_port_add(req, name):
     return result(rc, out)
 
 
-@route("DELETE", rf"/api/admin/vps/{NAME}/ports/(?P<port>\d{{1,5}})", "admin")
+@route("DELETE", rf"/api/admin/vps/{NAME}/ports/(?P<port>[^/]*)", "admin")
 def a_port_del(req, name, port):
     need_row(name)
+    if not (port.isascii() and port.isdigit() and 1 <= int(port) <= 65535):
+        raise ApiError(422, "Port publik tidak valid (pilih port yang akan dihapus).")
     ensure_idle(name)
     with held(name, ALLOC):
         rc, out = cli(["port-del", name], {"EXT": port})
@@ -966,7 +979,7 @@ def a_settings(req):
     vals = {}
     for line in out.splitlines():
         k, sep, v = line.partition("=")
-        if sep:
+        if sep and k.strip():
             vals[k.strip()] = v.strip()
     return {"ok": True, "settings": vals, "keys": list(SETTING_KEYS)}
 
@@ -1067,7 +1080,8 @@ class Handler(BaseHTTPRequestHandler):
             return None
         if s["role"] == "user":
             row = get_row(s["name"])
-            if not row or pw_fp(row["password"]) != s["fp"]:
+            # Reinstall mengganti password di tengah job; sesi pemilik diperbarui oleh after() saat job selesai.
+            if not row or (pw_fp(row["password"]) != s["fp"] and not busy_job(s["name"])):
                 drop_session(tok)
                 return None
         s["via"] = "cookie"
@@ -1093,6 +1107,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(data)))
+        if self.close_connection:
+            self.send_header("Connection", "close")
         self.security_headers(nonce)
         for k, v in extra or []:
             self.send_header(k, v)
@@ -1109,6 +1125,7 @@ class Handler(BaseHTTPRequestHandler):
         if n > MAX_BODY:
             raise ApiError(413, "Body terlalu besar.")
         raw = self.rfile.read(n)
+        self._body_read = True
         try:
             data = json.loads(raw)
         except ValueError:
@@ -1118,6 +1135,7 @@ class Handler(BaseHTTPRequestHandler):
         return data
 
     def handle_any(self, method):
+        self._body_read = False
         path = urlparse(self.path).path
         if method == "GET" and path == "/":
             nonce = secrets.token_urlsafe(16)
@@ -1138,7 +1156,7 @@ class Handler(BaseHTTPRequestHandler):
                     handler = (role, fn, match.groupdict())
                     break
             if not handler:
-                raise ApiError(404, "Endpoint tidak ditemukan.")
+                raise ApiError(404, f"Endpoint tidak ditemukan: {method} {path[:120]}")
             role, fn, kwargs = handler
             body = self.read_body() if method in ("POST", "DELETE") else {}
             auth = self.authenticate(ip)
@@ -1159,6 +1177,8 @@ class Handler(BaseHTTPRequestHandler):
                 extra.append(("Set-Cookie", f"{COOKIE}=; Max-Age=0; HttpOnly; SameSite=Strict; Path=/"))
             self.send_json(status, payload, extra)
         except ApiError as exc:
+            if method in ("POST", "DELETE") and not self._body_read and to_int(self.headers.get("Content-Length")) > 0:
+                self.close_connection = True  # sisa body belum dibaca; jangan dipakai ulang sebagai request baru
             self.send_json(exc.status, {"ok": False, "error": exc.msg})
         except (BrokenPipeError, ConnectionResetError):
             pass

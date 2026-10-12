@@ -2,7 +2,7 @@
 
 set -uo pipefail
 
-VERSION="3.2.0"
+VERSION="3.2.2"
 APP_NAME="vpsnat"
 BASE_DIR="${VPSNAT_BASE_DIR:-/etc/vpsnat}"
 DB_FILE="${BASE_DIR}/vps.db"
@@ -22,7 +22,7 @@ PORT_MIN=20000
 PORT_MAX=59999
 SSH_BASE=20000
 VPS_PORTS_MIN=2
-VPS_PORTS_MAX=10
+VPS_PORTS_MAX=50
 
 BIN_PATH="/usr/local/bin/vpsnat"
 INSTALL_DIR="/usr/local/lib/vpsnat"

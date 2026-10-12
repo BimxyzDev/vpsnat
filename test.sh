@@ -46,6 +46,14 @@ range=$(alloc_contiguous_ports 3)
 read -r a b <<< "$range"
 [[ "$((b-a+1))" -eq 3 ]]
 
+# regresi: create harus memakai SEMUA port hasil alloc_ports (dulu `read -a` hanya membaca baris pertama
+# sehingga hanya port SSH yang terbuka) dan batas port saat create = 50
+mapfile -t _alloc <<< "$(alloc_ports 7)"
+[[ "${#_alloc[@]}" -eq 7 ]]
+grep -q 'mapfile -t alloc' "$ROOT/vps.sh"
+! grep -q 'read -ra alloc' "$ROOT/vps.sh"
+[[ "$VPS_PORTS_MIN" -eq 2 && "$VPS_PORTS_MAX" -eq 50 ]]
+
 bandwidth_rate_normalize 100 >/dev/null
 grep -q 'BW_QUOTA_GB:-.*QUOTA:-' "$ROOT/bandwidth.sh"
 grep -q 'BW_LIMIT_MBIT:-.*RATE:-' "$ROOT/bandwidth.sh"

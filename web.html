@@ -68,7 +68,22 @@ pre{background:var(--dark);color:#e2e8f0;border-radius:10px;padding:12px;overflo
 .danger{border-color:#fecaca;background:#fffafa}
 .foot{text-align:center;color:var(--mut);font-size:12px;margin-top:20px}
 .cols2{display:grid;gap:10px;grid-template-columns:1fr 1fr}.cols3{display:grid;gap:10px;grid-template-columns:repeat(3,1fr)}
-@media(max-width:520px){.cols3{grid-template-columns:1fr 1fr}.kv{grid-template-columns:92px 1fr}.nav .in{padding:9px 12px}}
+.stats{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));margin-bottom:14px}
+.stat{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:12px 14px;box-shadow:var(--sh)}
+.stat b{display:block;font-size:20px;letter-spacing:-.3px;line-height:1.2}.stat span{color:var(--mut);font-size:12px}.stat small{display:block;color:var(--mut);font-size:11px;margin-top:2px}
+.stat:last-child:nth-child(odd){grid-column:1/-1}
+.stat.ok b{color:var(--ok)}.stat.warn b{color:var(--warn)}.stat.bad b{color:var(--bad)}
+.fbar{display:grid;gap:8px;grid-template-columns:1fr 150px;margin-bottom:12px}
+.vgrid{display:grid;gap:12px;grid-template-columns:repeat(auto-fill,minmax(290px,1fr))}
+.vc{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:14px;box-shadow:var(--sh);cursor:pointer;transition:border-color .15s,box-shadow .15s}
+.vc:hover{border-color:var(--ac);box-shadow:0 4px 14px rgba(37,99,235,.12)}
+.vc .vh{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:2px}.vc .vh b{font-size:15px;word-break:break-all}
+.vc .vs{color:var(--mut);font-size:12px;margin-bottom:8px}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}.chip{background:var(--card2);color:var(--tx);border-radius:8px;padding:2px 8px;font-size:12px;font-weight:500}
+.vc .vf{display:flex;justify-content:space-between;gap:8px;color:var(--mut);font-size:12px;margin-top:8px}
+.vc .m{margin-bottom:0}
+.empty{text-align:center;color:var(--mut);padding:26px 10px}
+@media(max-width:520px){.fbar{grid-template-columns:1fr}.cols3{grid-template-columns:1fr 1fr}.kv{grid-template-columns:92px 1fr}.nav .in{padding:9px 12px}}
 </style>
 </head>
 <body>
@@ -102,6 +117,9 @@ const val = id => { const e = document.getElementById(id); return e ? e.value.tr
 const fb = b => { b = Number(b)||0; if (b>=1e12) return (b/1e12).toFixed(2)+' TB'; if (b>=1e9) return (b/1e9).toFixed(2)+' GB'; if (b>=1e6) return (b/1e6).toFixed(1)+' MB'; if (b>=1e3) return (b/1e3).toFixed(0)+' KB'; return b+' B'; };
 const fdate = e => e ? new Date(e*1000).toLocaleString('id-ID',{dateStyle:'medium',timeStyle:'short'}) : 'Tanpa expired';
 const fup = s => { const d=Math.floor(s/86400), h=Math.floor(s%86400/3600); return d+'h '+h+'j'; };
+const fmb = m => { m = Number(m)||0; return m >= 1024 ? (m/1024).toFixed(m % 1024 ? 1 : 0) + ' GB' : m + ' MB'; };
+const daysLeft = e => e ? Math.ceil((e*1000 - Date.now())/864e5) : null;
+const fexp = e => { if (!e) return '∞'; const d = daysLeft(e); return d < 0 ? 'Expired' : d === 0 ? 'Hari ini' : d + ' hari lagi'; };
 const IMAGES = ['ubuntu24','ubuntu22','ubuntu20','debian12','debian11','alma9','rocky9','alpine'];
 const opts = (list, sel) => list.map(x => `<option value="${esc(x)}"${x===sel?' selected':''}>${esc(x)}</option>`).join('');
 
@@ -119,7 +137,7 @@ async function api(method, path, body) {
     body: body === undefined ? undefined : JSON.stringify(body)});
   let d = {};
   try { d = await r.json(); } catch (e) {}
-  if (r.status === 401 && !path.startsWith('/api/login') && S.role) { S.role = null; render(); }
+  if (r.status === 401 && !path.startsWith('/api/login') && S.role) { S.role = null; render(); d.error = 'Sesi berakhir, silakan login lagi.'; toast(d.error, true); }
   if (!r.ok || d.ok === false) throw new Error(d.error || 'HTTP ' + r.status);
   return d;
 }
@@ -131,6 +149,17 @@ async function act(btn, fn) {
   finally { if (btn) btn.disabled = false; }
 }
 
+async function copyText(t) {
+  if (navigator.clipboard && window.isSecureContext) return navigator.clipboard.writeText(t);
+  const ta = document.createElement('textarea');
+  ta.value = t; ta.setAttribute('readonly', ''); ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0';
+  document.body.appendChild(ta); ta.select();
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch (e) {}
+  ta.remove();
+  if (!ok) throw new Error('copy gagal');
+}
+
 function clearTimers() { S.timers.forEach(clearInterval); S.timers = []; }
 
 function track(id, base, done) {
@@ -140,7 +169,7 @@ function track(id, base, done) {
     try {
       const {job} = await api('GET', base + '/' + id);
       const l = $('#joblog');
-      if (l) l.textContent = '[' + job.kind + ' ' + job.name + '] ' + job.status.toUpperCase() + '\n' + (job.output || '');
+      if (l) { l.style.display = 'block'; l.textContent = '[' + job.kind + ' ' + job.name + '] ' + job.status.toUpperCase() + '\n' + (job.output || ''); }
       if (job.status === 'running') return setTimeout(tick, 3000);
       toast(job.kind + ' ' + job.name + (job.status === 'done' ? ' selesai' : ' gagal'), job.status !== 'done');
       if (done) done(job);
@@ -173,8 +202,9 @@ function stateBadge(v) {
 
 function portsTable(v) {
   if (!v.ports.length) return '<div class="mut">Tidak ada port.</div>';
-  return '<div class="tw"><table style="min-width:360px"><tr><th>Publik</th><th>Internal</th><th>Proto</th></tr>'
-    + v.ports.map(p => `<tr><td>${esc(v.host)}:${p.public}</td><td>${p.internal}</td><td>${esc(p.proto)}${p.ssh ? ' · SSH' : ''}</td></tr>`).join('') + '</table></div>';
+  const app = v.ports.filter(p => !p.ssh).length;
+  return `<div class="mut" style="font-size:12px;margin-bottom:6px">${v.ports.length} port · 1 SSH · ${app} aplikasi</div><div class="tw"><table style="min-width:320px"><tr><th>Publik</th><th>Internal</th><th>Proto</th><th></th></tr>`
+    + v.ports.map(p => `<tr><td>${esc(v.host)}:${p.public}</td><td>${p.internal}</td><td>${esc(p.proto)}${p.ssh ? ' · <b>SSH</b>' : ''}</td><td><button class="sm sec" data-a="copy" data-t="${esc(v.host)}:${p.public}" title="Salin">${ic('copy')}</button></td></tr>`).join('') + '</table></div>';
 }
 
 function infoKv(v, admin) {
@@ -226,6 +256,7 @@ async function logout() {
 
 // ---------- user ----------
 async function renderUser() {
+  clearTimers();
   try { S.me = (await api('GET', '/api/me')).vps; } catch (e) { return toast(e.message, true); }
   const v = S.me;
   setNav(`<button class="sec sm" data-a="logout">${ic('out')} Keluar</button>`, 'VPS');
@@ -267,14 +298,44 @@ function renderAdmin() {
   ({vps: tabVps, create: tabCreate, host: tabHost, api: tabApi})[S.tab]();
 }
 
+function vstats(l) {
+  const sum = f => l.reduce((t, v) => t + (f(v) || 0), 0);
+  const run = l.filter(v => v.state === 'RUNNING' && !v.suspended).length, sus = l.filter(v => v.suspended).length;
+  const soon = l.filter(v => v.expires && daysLeft(v.expires) <= 7).length;
+  const used = sum(v => v.bw.used), ports = sum(v => v.ports.length);
+  const c = (cls, n, lbl, sm) => `<div class="stat ${cls}"><b>${n}</b><span>${lbl}</span>${sm ? `<small>${sm}</small>` : ''}</div>`;
+  return c('', l.length, 'Total VPS', ports + ' port aktif') + c('ok', run, 'Running') + c(l.length - run - sus ? 'bad' : '', l.length - run - sus, 'Stopped') + c(sus ? 'warn' : '', sus, 'Suspend')
+    + c(soon ? 'warn' : '', soon, 'Expired ≤ 7 hari') + c('', sum(v => v.cpu) + ' CPU', 'Alokasi CPU', fmb(sum(v => v.ram)) + ' RAM · ' + sum(v => v.disk) + ' GB disk') + c('', fb(used), 'Bandwidth terpakai');
+}
+
+function vcard(v) {
+  const bw = v.bw, p = bw.quota > 0 ? Math.min(100, bw.used / bw.quota * 100) : null;
+  const d = daysLeft(v.expires), ecls = v.expires && d <= 7 ? 'warnt' : '';
+  return `<div class="vc" data-a="open" data-n="${esc(v.name)}">
+    <div class="vh"><b>${esc(v.name)}</b>${stateBadge(v)}</div>
+    <div class="vs">${esc(v.plan)} · ${esc(v.backend)}${v.owner && v.owner !== '-' ? ' · ' + esc(v.owner) : ''}</div>
+    <div class="chips"><span class="chip">${v.cpu} CPU</span><span class="chip">${fmb(v.ram)}</span><span class="chip">${v.disk} GB</span><span class="chip">${v.ports.length} port</span></div>
+    ${p == null ? `<div class="mh"><span>Bandwidth</span><span>${fb(bw.used)} · ∞</span></div>` : bar('Bandwidth', p, fb(bw.used) + ' / ' + fb(bw.quota) + (bw.exhausted ? ' · HABIS' : ''))}
+    <div class="vf"><span>SSH :${v.ssh}${bw.rate > 0 ? ' · ' + bw.rate + ' Mbps' : ''}</span><span class="${ecls}">${v.expires ? esc(fexp(v.expires)) : 'Tanpa expired'}</span></div></div>`;
+}
+
+function renderVlist() {
+  const q = (S.q || '').toLowerCase(), f = S.f || 'all', el = $('#vlist'); if (!el) return;
+  const l = (S.vps || []).filter(v => (!q || v.name.toLowerCase().includes(q) || String(v.owner).toLowerCase().includes(q) || String(v.ssh).includes(q))
+    && (f === 'all' || (f === 'RUNNING' && v.state === 'RUNNING' && !v.suspended) || (f === 'STOPPED' && v.state !== 'RUNNING' && !v.suspended)
+      || (f === 'SUSPEND' && v.suspended) || (f === 'EXP' && v.expires && daysLeft(v.expires) <= 7)));
+  el.innerHTML = l.length ? l.map(vcard).join('') : `<div class="empty" style="grid-column:1/-1">${(S.vps || []).length ? 'Tidak ada VPS yang cocok dengan filter.' : 'Belum ada VPS. Buat lewat tab "Buat VPS".'}</div>`;
+}
+
 async function tabVps() {
-  try { S.vps = (await api('GET', '/api/admin/vps')).vps; } catch (e) { return toast(e.message, true); }
-  const rows = S.vps.map(v => `<tr class="click" data-a="open" data-n="${esc(v.name)}">
-    <td><b>${esc(v.name)}</b></td><td>${stateBadge(v)}</td><td>${esc(v.plan)}/${esc(v.backend)}</td>
-    <td>${v.cpu}c · ${v.ram}M · ${v.disk}G</td><td>${v.ssh}</td>
-    <td>${fb(v.bw.used)}${v.bw.quota > 0 ? ' / ' + fb(v.bw.quota) : ''}</td><td>${v.expires ? esc(fdate(v.expires)) : '∞'}</td><td>${esc(v.owner)}</td></tr>`).join('');
-  $('#tab').innerHTML = `<div class="card"><div class="row" style="justify-content:space-between;margin-bottom:8px"><h2 style="margin:0">${S.vps.length} VPS</h2><button class="sm sec" data-a="refresh">${ic('refresh')} Refresh</button></div>
-    <div class="tw"><table><tr><th>Nama</th><th>Status</th><th>Tipe</th><th>Spek</th><th>SSH</th><th>Bandwidth</th><th>Expired</th><th>Owner</th></tr>${rows || '<tr><td colspan="8" class="mut">Belum ada VPS.</td></tr>'}</table></div></div>`;
+  try { const d = await api('GET', '/api/admin/vps'); S.vps = d.vps; S.limits = d.limits || S.limits; } catch (e) { return toast(e.message, true); }
+  if (S.role !== 'admin' || S.tab !== 'vps' || !$('#tab')) return;
+  const f = S.f || 'all', fo = [['all', 'Semua'], ['RUNNING', 'Running'], ['STOPPED', 'Stopped'], ['SUSPEND', 'Suspend'], ['EXP', 'Segera expired']];
+  $('#tab').innerHTML = `<div class="stats">${vstats(S.vps)}</div>
+    <div class="row" style="justify-content:space-between;margin-bottom:10px"><h2 style="margin:0">${S.vps.length} VPS</h2><button class="sm sec" data-a="refresh">${ic('refresh')} Refresh</button></div>
+    <div class="fbar"><input id="vq" type="search" placeholder="Cari nama / owner / port SSH…" value="${esc(S.q || '')}" autocomplete="off"><select id="vf">${fo.map(([k, n]) => `<option value="${k}"${f === k ? ' selected' : ''}>${n}</option>`).join('')}</select></div>
+    <div class="vgrid" id="vlist"></div>`;
+  renderVlist();
 }
 
 function tabCreate() {
@@ -286,7 +347,7 @@ function tabCreate() {
     <div><label>Disk (GB)</label><input id="c_disk" type="number" value="10" min="1"></div></div>
     <div class="cols3"><div><label>Tipe</label><select id="c_plan"><option>shared</option><option>dedicated</option></select></div>
     <div><label>Backend</label><select id="c_backend"><option>container</option><option>vm</option></select></div>
-    <div><label>Jumlah port (2-10)</label><input id="c_ports" type="number" value="3" min="2" max="10"></div></div>
+    <div><label>Jumlah port total (2-${(S.limits || {}).ports_max || 50}, termasuk 1 SSH)</label><input id="c_ports" type="number" value="3" min="2" max="${(S.limits || {}).ports_max || 50}"></div></div>
     <div class="cols3"><div><label>Expired (30d / 2026-12-31)</label><input id="c_expire" placeholder="kosong = tanpa"></div>
     <div><label>Kuota BW (GB)</label><input id="c_bwq" type="number" min="0" placeholder="default"></div>
     <div><label>Limit (Mbps)</label><input id="c_bwr" type="number" min="0" placeholder="default"></div></div>
@@ -301,9 +362,10 @@ async function tabHost() {
   try {
     const [h, s] = await Promise.all([api('GET', '/api/admin/host'), api('GET', '/api/admin/settings')]);
     const x = h.host;
+    if (S.role !== 'admin' || S.tab !== 'host' || !$('#tab')) return;
     $('#tab').innerHTML = `<div class="grid"><div class="card"><h2>Host</h2><div class="kv">
       <span>Public IP</span><span>${esc(x.public_ip)}</span><span>CPU</span><span>${x.cores} core · load ${x.load.join(' ')}</span>
-      <span>RAM</span><span>${fb(x.ram.total - x.ram.avail)} / ${fb(x.ram.total)}</span><span>Disk /</span><span>${fb(x.disk.used)} / ${fb(x.disk.total)}</span>
+      <span>RAM</span><span>${fb(x.ram.total - x.ram.avail)} / ${fb(x.ram.total)} (${Math.round((x.ram.total - x.ram.avail) / x.ram.total * 100)}%)</span><span>Disk /</span><span>${fb(x.disk.used)} / ${fb(x.disk.total)} (${Math.round(x.disk.used / x.disk.total * 100)}%)</span>
       <span>Web panel</span><span>${x.web.domain ? '<code>' + esc(x.web.domain) + '</code>' : '<span class="mut">tanpa domain (port ' + x.web.port + ')</span>'}</span>
       <span>Uptime</span><span>${fup(x.uptime)}</span><span>VPS</span><span>${x.vps.total} total · ${x.vps.running} running · ${x.vps.suspended} suspend</span></div>
       ${x.web.domain ? '' : '<p class="mut" style="margin:10px 0 0">Pasang domain + HTTPS: <code>vpsnat web-domain panel.contoh.com</code></p>'}<div class="row" style="margin-top:12px"><button class="sec" data-a="sync">${ic('refresh')} Sync DB</button><button class="sec" data-a="nodes">Dashboard multi-node</button></div></div>
@@ -327,13 +389,15 @@ curl -X POST -H "Authorization: Bearer $KEY" -d '{"name":"demo","cpu":2,"ram":20
     <p class="mut">Operasi panjang (create, delete, reinstall) mengembalikan <code>{"job":"id"}</code>; polling <code>/api/admin/jobs/{id}</code>.</p></div>`;
 }
 
-async function openVps(name) {
-  let v, r;
-  try { v = (await api('GET', '/api/admin/vps/' + name)).vps; } catch (e) { return toast(e.message, true); }
-  S.sel = name;
+async function openVps(name, refresh) {
+  let v;
+  try { v = (await api('GET', vpath(name))).vps; } catch (e) { if (refresh && /tidak ditemukan/i.test(e.message)) { closeSheet(); tabVps(); } return toast(e.message, true); }
+  if (refresh && S.sel !== name) return; // sheet sudah ditutup / ganti VPS saat menunggu respons
+  const old = $('#sheet'), top = old ? old.scrollTop : 0;
   closeSheet();
+  S.sel = name;
   const el = document.createElement('div');
-  el.className = 'sheet'; el.id = 'sheet';
+  el.className = 'sheet'; el.id = 'sheet'; el.dataset.n = name;
   el.innerHTML = `<div class="in">
     <div class="top"><h1>${esc(v.name)} ${stateBadge(v)}</h1><button class="sec sm" data-a="close">${ic('x')} Tutup</button></div>
     <div class="grid"><div class="card"><h2>Info</h2>${infoKv(v, true)}</div><div class="card"><h2>Resource</h2><div id="res" class="mut">Memuat…</div></div></div>
@@ -349,22 +413,23 @@ async function openVps(name) {
         <div class="row" style="margin-top:8px"><button data-a="owner">Simpan owner</button><button class="sec" data-a="plan">Simpan tipe</button></div></div>
       <div class="card"><h3>Bandwidth</h3><div class="cols2"><div><label>Kuota GB (0=∞)</label><input id="b_q" type="number" value="${v.bw.quota ? v.bw.quota / 1e9 : 0}"></div><div><label>Limit Mbps (0=∞)</label><input id="b_r" type="number" value="${v.bw.rate}"></div></div>
         <div class="row" style="margin-top:8px"><button data-a="bw" data-m="set">Set</button><button class="sec" data-a="bw" data-m="reset">Reset pemakaian</button></div></div>
-      <div class="card"><h3>Port</h3>${portsTable(v)}<div class="row" style="margin-top:8px"><select id="p_proto" style="width:90px"><option>tcp</option><option>udp</option><option>both</option></select><input id="p_count" type="number" value="1" min="1" style="width:80px"><button data-a="portadd">Tambah</button></div>
-        <div class="row" style="margin-top:8px"><input id="p_del" type="number" placeholder="port publik" style="width:130px"><button class="sec" data-a="portdel">Hapus port</button></div></div>
+      <div class="card"><h3>Port</h3>${portsTable(v)}<div class="row" style="margin-top:8px"><select id="p_proto" style="width:90px"><option>tcp</option><option>udp</option><option>both</option></select><input id="p_count" type="number" value="1" min="1" max="50" style="width:80px" title="Jumlah port"><button data-a="portadd">Tambah port</button></div>
+        <div class="row" style="margin-top:8px"><select id="p_del" style="flex:1">${v.ports.filter(x => !x.ssh).map(x => `<option value="${x.public}">${x.public} → ${x.internal} (${esc(x.proto)})</option>`).join('') || '<option value="">Tidak ada port aplikasi</option>'}</select><button class="sec" data-a="portdel">Hapus port</button></div></div>
       <div class="card"><h3>Reinstall</h3><select id="rimg">${opts(IMAGES, 'ubuntu22')}</select><div style="margin-top:8px"><button class="warn" data-a="reinstall">Reinstall</button></div></div>
       <div class="card danger"><h3>Hapus VPS</h3><label>Ketik <b>${esc(v.name)}</b> untuk konfirmasi</label><input id="d_conf" autocapitalize="none"><div style="margin-top:8px"><button class="bad" data-a="delete">${ic('trash')} Hapus permanen</button></div></div>
     </div></div>`;
   document.body.appendChild(el);
+  el.scrollTop = top;
   const poll = async () => {
-    if (!$('#sheet')) return;
-    try { $('#res').innerHTML = resHtml((await api('GET', '/api/admin/vps/' + name + '/resources')).res); } catch (e) {}
+    if (S.sel !== name || !$('#res')) return;
+    try { const d = await api('GET', vpath(name, '/resources')); if (S.sel === name && $('#res')) $('#res').innerHTML = resHtml(d.res); } catch (e) {}
   };
-  poll(); S.timers.push(setInterval(poll, 5000));
+  poll(); S.sheetTimer = setInterval(poll, 5000);
 }
 
-function closeSheet() { const e = $('#sheet'); if (e) e.remove(); S.sel = null; }
+function closeSheet() { clearInterval(S.sheetTimer); S.sheetTimer = null; const e = $('#sheet'); if (e) e.remove(); S.sel = null; }
 
-async function refreshAdmin() { if (S.tab === 'vps') await tabVps(); if (S.sel) openVps(S.sel); }
+async function refreshAdmin() { if (S.tab === 'vps') await tabVps(); if (S.sel) openVps(S.sel, true); }
 
 function render() {
   clearTimers(); closeSheet(); document.title = S.brand + ' Panel';
@@ -374,12 +439,14 @@ function render() {
 }
 
 // ---------- actions ----------
-const post = (p, b) => api('POST', '/api/admin/vps/' + S.sel + p, b);
+const cur = () => { const e = $('#sheet'); const n = (e && e.dataset.n) || S.sel; if (!n || n === 'null') throw new Error('Tidak ada VPS terpilih. Buka ulang VPS.'); return n; };
+const vpath = (n, p) => '/api/admin/vps/' + encodeURIComponent(n) + (p || '');
+const post = (p, b) => api('POST', vpath(cur(), p), b);
 const A = {
   lm: b => { S.loginMode = b.dataset.m; renderLogin(); },
   login: b => doLogin(b),
   logout: () => logout(),
-  copy: b => navigator.clipboard.writeText(b.dataset.t).then(() => toast('Disalin')).catch(() => toast('Gagal menyalin', true)),
+  copy: b => copyText(b.dataset.t).then(() => toast('Disalin')).catch(() => toast('Gagal menyalin', true)),
   reveal: b => { const e = $('#pw'); const hid = e.textContent.startsWith('•'); e.textContent = hid ? e.dataset.pw : '••••••••'; b.lastChild.textContent = hid ? ' Sembunyikan' : ' Tampilkan'; },
   mepower: b => act(b, async () => { const d = await api('POST', '/api/me/action', {action: b.dataset.p}); toast(b.dataset.p + ' OK'); setTimeout(renderUser, 800); }),
   mepasswd: b => act(b, async () => { const d = await api('POST', '/api/me/passwd', {password: $('#newpw').value || undefined}); toast('Password diganti'); await renderUser(); const e = $('#pw'); if (e && d.password) { e.dataset.pw = d.password; e.textContent = d.password; } }),
@@ -399,21 +466,22 @@ const A = {
   owner: b => act(b, async () => { await post('/owner', {owner: val('x_owner')}); toast('Owner disimpan'); refreshAdmin(); }),
   plan: b => act(b, async () => { await post('/plan', {plan: val('x_plan')}); toast('Tipe disimpan'); refreshAdmin(); }),
   bw: b => act(b, async () => { await post('/bandwidth', {action: b.dataset.m, quota_gb: val('b_q') || 0, rate_mbit: val('b_r') || 0}); toast('Bandwidth diperbarui'); refreshAdmin(); }),
-  portadd: b => act(b, async () => { await post('/ports', {proto: val('p_proto'), count: +val('p_count')}); toast('Port ditambah'); refreshAdmin(); }),
-  portdel: b => act(b, async () => { await api('DELETE', '/api/admin/vps/' + S.sel + '/ports/' + val('p_del')); toast('Port dihapus'); refreshAdmin(); }),
+  portadd: b => act(b, async () => { const n = +val('p_count'); if (!Number.isInteger(n) || n < 1 || n > 50) throw new Error('Jumlah port 1-50.'); await post('/ports', {proto: val('p_proto'), count: n}); toast(n + ' port ditambah'); refreshAdmin(); }),
+  portdel: b => act(b, async () => { const pt = val('p_del'); if (!/^\d{1,5}$/.test(pt)) throw new Error('Pilih port yang akan dihapus.'); await api('DELETE', vpath(cur(), '/ports/' + pt)); toast('Port ' + pt + ' dihapus'); refreshAdmin(); }),
   reinstall: b => act(b, async () => {
-    if (!confirm('Reinstall ' + S.sel + '? Semua data guest hilang.')) return;
-    const d = await post('/reinstall', {image: val('rimg')}); const n = S.sel; closeSheet(); S.tab = 'vps'; renderAdmin();
+    if (!confirm('Reinstall ' + cur() + '? Semua data guest hilang.')) return;
+    const d = await post('/reinstall', {image: val('rimg')}); closeSheet(); S.tab = 'vps'; renderAdmin();
     track(d.job, '/api/admin/jobs', () => tabVps());
   }),
   delete: b => act(b, async () => {
-    if (val('d_conf') !== S.sel) throw new Error('Nama konfirmasi tidak cocok.');
-    const d = await api('DELETE', '/api/admin/vps/' + S.sel); closeSheet(); S.tab = 'vps'; renderAdmin();
+    if (val('d_conf') !== cur()) throw new Error('Nama konfirmasi tidak cocok.');
+    const d = await api('DELETE', vpath(cur())); closeSheet(); S.tab = 'vps'; renderAdmin();
     track(d.job, '/api/admin/jobs', () => tabVps());
   }),
   create: b => act(b, async () => {
+    const portsN = () => { const n = +val('c_ports'), mx = (S.limits || {}).ports_max || 50; if (!Number.isInteger(n) || n < 2 || n > mx) throw new Error('Jumlah port harus 2-' + mx + ' (termasuk 1 port SSH).'); return n; };
     const body = {name: val('c_name'), image: val('c_image'), cpu: +val('c_cpu'), ram: +val('c_ram'), disk: +val('c_disk'), plan: val('c_plan'), backend: val('c_backend'),
-      ports: +val('c_ports'), expire: val('c_expire') || '0', owner: val('c_owner') || '-', nesting: $('#c_nest').checked,
+      ports: portsN(), expire: val('c_expire') || '0', owner: val('c_owner') || '-', nesting: $('#c_nest').checked,
       password: val('c_pass') || undefined, bw_quota_gb: val('c_bwq') || undefined, bw_rate_mbit: val('c_bwr') || undefined};
     const d = await api('POST', '/api/admin/vps', body);
     S.tab = 'vps'; renderAdmin(); toast('Pembuatan dimulai');
@@ -423,6 +491,11 @@ const A = {
   nodes: b => act(b, async () => { const d = await api('GET', '/api/admin/nodes'); const p = $('#nodesout'); p.style.display = 'block'; p.textContent = d.output; }),
   setting: b => act(b, async () => { await api('POST', '/api/admin/settings', {key: val('s_key'), value: val('s_val')}); toast('Setting disimpan'); tabHost(); }),
 };
+
+document.addEventListener('input', e => {
+  if (e.target.id === 'vq') { S.q = e.target.value; renderVlist(); }
+  else if (e.target.id === 'vf') { S.f = e.target.value; renderVlist(); }
+});
 
 document.addEventListener('click', e => {
   const el = e.target.closest('[data-a]');

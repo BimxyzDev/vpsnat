@@ -88,7 +88,7 @@ bandwidth_status() {
   qstate=$(db_field "$n" 19); qstate=${qstate:-0}
   used=$((rx + tx))
   if (( quota > 0 )); then
-    awk -v u="$used" -v q="$quota" 'BEGIN{printf "Kuota    : %.2f / %.2f GB (%.1f%%)\n", u/1000000000, q, (u/q)*100}'
+    awk -v u="$used" -v q="$quota" 'BEGIN{printf "Kuota    : %.2f / %.2f GB (%.1f%%)\n", u/1000000000, q/1000000000, (u/q)*100}'
   else
     echo "Kuota    : unlimited"
   fi
@@ -107,7 +107,7 @@ bandwidth_set() {
   normalized=$(bandwidth_rate_normalize "$rate") || { err "Rate harus angka Mbps; 0 = unlimited."; return 1; }
   quota_bytes=$(awk -v g="$quota" 'BEGIN{printf "%.0f", g*1000000000}')
   db_set_fields "$n" "15=$quota_bytes" "18=$normalized"
-  bandwidth_apply_tc "$n" || return 1
+  bandwidth_apply_tc "$n" || warn "Limit speed belum terpasang (VPS belum berjalan?); diterapkan otomatis saat VPS start."
   if (( quota_bytes == 0 )); then
     db_set_field "$n" 19 0
   else

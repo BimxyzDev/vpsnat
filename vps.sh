@@ -104,7 +104,10 @@ vps_create() {
   ip=$(next_ip) || { err "IP habis."; return 1; }
   local -a alloc
   plist=$(alloc_ports "$nports") || { err "Port kontigu kosong tidak cukup (butuh ${nports})."; return 1; }
-  read -ra alloc <<< "$plist"
+  # alloc_ports mengeluarkan satu port per baris; `read -a` hanya membaca baris pertama,
+  # sehingga dulu hanya port SSH yang terbuka. mapfile membaca semua baris.
+  mapfile -t alloc <<< "$plist"
+  (( ${#alloc[@]} == nports )) || { err "Alokasi port tidak lengkap (${#alloc[@]}/${nports})."; return 1; }
   ssh_port=${alloc[0]}
 
   info "Membuat ${name} [${plan}/${vtype}] (${img}) ${cpu}CPU/${ram}MB/${disk}GB → ${ip}"
@@ -159,7 +162,7 @@ vps_list() {
     [[ "${susp:-0}" == "1" ]] && state="SUSPEND"
     quota=${quota:-0}; rx=${rx:-0}; tx=${tx:-0}; rate=${rate:-0}
     bw="$(bandwidth_fmt_bytes "$((rx + tx))")"
-    (( quota > 0 )) && bw="${bw}/${quota}GB" || bw="${bw}/∞"
+    (( quota > 0 )) && bw="${bw}/$(awk -v q="$quota" 'BEGIN{printf "%g", q/1000000000}')GB" || bw="${bw}/∞"
     case "$state" in RUNNING) state="${G}RUNNING${N}";; STOPPED) state="${R}STOPPED${N}";; SUSPEND) state="${Y}SUSPEND${N}";; esac
     printf "%-14s %-10s %-10s %-19b %-14s %-4s %-6s %-5s %-7s %-10s\n" "$name" "${plan:-shared}" "${vt:-container}" "$state" "$ip" "$cpu" "${ram}M" "${disk}G" "$ssh" "$bw"
   done < "$DB_FILE"
@@ -304,7 +307,7 @@ vps_reinstall() {
   if [[ "$vt" == "container" ]]; then lxc config set "$n" limits.memory.swap false; lxc config set "$n" security.nesting true; else lxc config set "$n" security.secureboot false; fi
   set_static_ip "$n" "$ip" || return 1
   lxc start "$n" || return 1; wait_guest "$n" || true; wait_ip "$n" "$ip" || true; setup_guest "$n" "$pass"
-  db_set_fields "$n" "8=$pass" "13=0" "14=${plan:-shared}" "15=${quota:-0}" "16=0" "17=0" "18=${rate:-0}" "19=0" "20=0" "21=0" "22=$(date +%s)" "23=0" "24=0" "25=-"
+  db_set_fields "$n" "8=$pass" "13=0" "14=${plan:-shared}" "15=${quota:-0}" "18=${rate:-0}" "20=0" "21=0" "22=$(date +%s)" "23=0" "24=0" "25=-"
   bandwidth_apply_tc "$n" >/dev/null 2>&1 || true
   apply_all_rules
   ok "Reinstall ${n} selesai."; vps_info "$n"
