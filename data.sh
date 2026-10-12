@@ -65,19 +65,32 @@ _vps_sync_locked() {
   local name ip ssh cpu ram disk vt
   while IFS= read -r name; do
     [[ -z "$name" || -n "$(db_get "$name")" ]] && continue
+    [[ "$name" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$ ]] || { err "Nama guest orphan tidak aman untuk sync; dilewati."; continue; }
     warn "Container '${name}' tidak ada di DB, menambahkan..."
     ip=$(lxc list "$name" -c 4 --format csv | awk '{print $1}'); ssh=$(next_ssh_port); cpu=$(lxc config get "$name" limits.cpu); cpu=${cpu:-1}; ram=$(lxc config get "$name" limits.memory | tr -dc '0-9'); ram=${ram:-1024}; disk=$(lxc config device get "$name" root size | tr -dc '0-9'); disk=${disk:-10}; vt=$(lxc info "$name" | awk '/^Type:/{print $2}'); [[ "$vt" == "virtual-machine" ]] && vt="vm" || vt="container"
-    db_add "$name" "${ip:-$(next_ip)}" "$ssh" "$cpu" "$ram" "$disk" "-" "unknown" "$(date +%F)" "$vt" 0 "-" 0 shared 0 0
-    ports_add_entry "$name" "tcp:${ssh}:22"
+    [[ "$ssh" =~ ^[0-9]{1,5}$ ]] && (( 10#$ssh >= 1 && 10#$ssh <= 65535 )) || { err "SSH port tidak valid untuk ${name}; dilewati dan perlu diperiksa manual."; continue; }
+    [[ "$ip" =~ ^${NET_PREFIX//./\.}\.([2-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|250)$ ]] || { err "IP guest tidak valid untuk ${name}; guest tidak disinkronkan."; continue; }
+    if cut -d'|' -f2 "$DB_FILE" | grep -Fqx "$ip"; then
+      err "IP ${ip} guest ${name} sudah dipakai record DB lain; sync dibatalkan untuk mencegah bentrok tenant."
+      continue
+    fi
+    lxc config set "$name" boot.autostart false >/dev/null 2>&1 || warn "Tidak dapat menonaktifkan autostart ${name}; status sync-pending harus diperiksa manual."
+    if ! lxc stop "$name" --timeout 20 >/dev/null 2>&1 && ! lxc stop "$name" --force >/dev/null 2>&1; then
+      warn "Guest ${name} gagal dihentikan; akan tetap di-karantina di DB, tetapi periksa LXD segera."
+    fi
+    db_add "$name" "$ip" "$ssh" "$cpu" "$ram" "$disk" "tcp:${ssh}:22" "unknown" "$(date +%F)" "$vt" 0 "-" 1 shared 0 0 || { err "Gagal menyimpan record sync untuk ${name}; guest dihentikan dan autostart dinonaktifkan."; continue; }
+    db_set_field "$name" 25 "sync-pending" || { err "Gagal memberi status karantina sync untuk ${name}; periksa DB manual."; continue; }
   done < <(lxc list -c n --format csv 2>/dev/null)
-  apply_all_rules; bandwidth_sync_all; ok "Sync selesai."
+  apply_all_rules || { err "Sync database selesai tetapi firewall gagal direkonsiliasi; record tetap dipertahankan."; return 1; }
+  bandwidth_sync_all || { err "Sync bandwidth gagal."; return 1; }
+  ok "Sync selesai. Container yang baru ditemukan tetap suspended (sync-pending); periksa lalu aktifkan dengan vpsnat unsuspend NAMA."
 }
 
 vps_sync() { with_alloc_lock _vps_sync_locked "$@"; }
 
 set_public_ip() {
   local cur ip="${1:-}"; cur=$(pub_ip); [[ -z "$ip" ]] && { read -rp "Public IP [${cur}]: " ip; ip=${ip:-$cur}; }
-  [[ "$ip" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || { err "Format IP tidak valid."; return 1; }
+  ipv4_valid "$ip" || { err "Format IPv4 tidak valid."; return 1; }
   conf_set PUBLIC_IP "$ip"; ok "Public IP: ${ip}"
 }
 

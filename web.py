@@ -5,13 +5,16 @@ Admin : login UI (username/password) atau `Authorization: Bearer <WEB_API_KEY>`.
 User  : login UI dengan nama VPS / port SSH + password root VPS.
 Config: /etc/vpsnat/vpsnat.conf (WEB_*). Logika provisioning tetap di CLI Bash.
 """
+import datetime
 import hashlib
 import hmac
+import ipaddress
 import json
 import os
 import re
 import secrets
 import shutil
+import signal
 import subprocess
 import sys
 import threading
@@ -60,8 +63,8 @@ DUMMY_HASH = hash_password("dummy-password-for-timing")
 
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,30}$")
 PASS_RE = re.compile(r"^[A-Za-z0-9@%^*_+=.,:;!?~-]{8,64}$")
-DUR_RE = re.compile(r"^(\d+[hdwm]|\d{4}-\d{2}-\d{2}|never|0)$")
-REL_DUR_RE = re.compile(r"^\d+[hdwm]$")
+DUR_RE = re.compile(r"^([0-9]+[hdwm]|[0-9]{4}-[0-9]{2}-[0-9]{2}|never|0)$", re.ASCII)
+REL_DUR_RE = re.compile(r"^[0-9]+[hdwm]$", re.ASCII)
 OWNER_RE = re.compile(r"^[^|\r\n]{1,60}$")
 IMAGES = ("ubuntu24", "ubuntu22", "ubuntu20", "debian12", "debian11", "alma9", "rocky9", "alpine")
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
@@ -120,10 +123,17 @@ INTS = ("ssh", "cpu", "ram", "disk", "expires", "suspended", "quota", "rx", "tx"
 
 
 def to_int(v):
-    try:
-        return int(float(v))
-    except (TypeError, ValueError):
-        return 0
+    """Strict integer parser for config/database fields; never truncates floats."""
+    if type(v) is int:
+        return v
+    if isinstance(v, str):
+        raw = v.strip()
+        if re.fullmatch(r"-?[0-9]{1,18}", raw, flags=re.ASCII):
+            try:
+                return int(raw, 10)
+            except (ValueError, OverflowError):
+                return 0
+    return 0
 
 
 def read_db():
@@ -142,8 +152,9 @@ def read_db():
         for k in INTS:
             r[k] = to_int(r[k])
         try:
-            r["rate"] = float(r["rate"] or 0)
-        except ValueError:
+            rate = float(r["rate"] or 0)
+            r["rate"] = rate if __import__("math").isfinite(rate) and abs(rate) <= 100000 else 0.0
+        except (ValueError, TypeError, OverflowError):
             r["rate"] = 0.0
         r["backend"] = r["backend"] or "container"
         r["plan"] = r["plan"] or "shared"
@@ -172,6 +183,7 @@ def pw_fp(password):
 
 # ---------- process helpers ----------
 def run_proc(argv, env=None, timeout=900):
+    """Run the CLI in its own process group so a timeout also terminates descendants."""
     base = {
         "PATH": os.environ.get("PATH", "/usr/sbin:/usr/bin:/sbin:/bin") + ":/snap/bin",
         "HOME": os.environ.get("HOME", "/root"),
@@ -180,14 +192,45 @@ def run_proc(argv, env=None, timeout=900):
     if env:
         base.update({k: str(v) for k, v in env.items()})
     try:
-        p = subprocess.run(
-            argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=base, timeout=timeout
+        p = subprocess.Popen(
+            argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            env=base, start_new_session=True,
         )
-    except subprocess.TimeoutExpired:
-        return 124, "Timeout: perintah dihentikan."
+        try:
+            out, _ = p.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(p.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            try:
+                out, _ = p.communicate(timeout=3)
+            except subprocess.TimeoutExpired as timeout_exc:
+                try:
+                    os.killpg(p.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                # Do not wait forever if a detached descendant escaped the group
+                # while keeping the stdout pipe open.
+                try:
+                    out, _ = p.communicate(timeout=2)
+                except subprocess.TimeoutExpired as final_exc:
+                    out = final_exc.output or timeout_exc.output or b""
+                    if p.stdout:
+                        try:
+                            p.stdout.close()
+                        except OSError:
+                            pass
+                    try:
+                        p.wait(timeout=2)
+                    except subprocess.TimeoutExpired:
+                        p.kill()
+                        p.wait(timeout=2)
+            tail = (out or b"").decode(errors="replace")
+            return 124, "Timeout: seluruh process group dihentikan.\n" + tail
     except OSError as exc:
         return 127, f"Perintah tidak dapat dijalankan: {exc}"
-    return p.returncode, p.stdout.decode(errors="replace")
+    return p.returncode, out.decode(errors="replace")
 
 
 def clean(out, limit=6000):
@@ -223,25 +266,36 @@ def result(rc, out):
 # ---------- validation ----------
 def v_name(v):
     v = str(v or "")
-    if not NAME_RE.match(v):
+    if not isinstance(v, str) or not NAME_RE.fullmatch(v):
         raise ApiError(422, "Nama tidak valid (a-z, 0-9, -; maks 31 karakter).")
     return v
 
 
 def v_int(b, key, default, lo, hi):
     v = b.get(key, default)
-    try:
-        n = int(v)
-    except (TypeError, ValueError):
-        raise ApiError(422, f"{key} harus angka.")
+    # JSON bool is a subclass of int in Python; floats must not be silently truncated.
+    if type(v) is int:
+        n = v
+    elif isinstance(v, str) and re.fullmatch(r"[0-9]{1,12}", v.strip(), flags=re.ASCII):
+        n = int(v.strip(), 10)
+    else:
+        raise ApiError(422, f"{key} harus integer tanpa pecahan.")
     if not lo <= n <= hi:
         raise ApiError(422, f"{key} harus {lo}-{hi}.")
     return n
 
 
 def v_num(v, key, hi):
+    if type(v) not in (int, float, str):
+        raise ApiError(422, f"{key} harus angka 0-{hi}.")
     s = str(v).strip()
-    if not NUM_RE.match(s) or float(s) > hi:
+    if not re.fullmatch(r"[0-9]+(?:\.[0-9]+)?", s, flags=re.ASCII):
+        raise ApiError(422, f"{key} harus angka 0-{hi}.")
+    try:
+        n = float(s)
+    except (ValueError, OverflowError):
+        raise ApiError(422, f"{key} harus angka 0-{hi}.")
+    if not __import__("math").isfinite(n) or n > hi:
         raise ApiError(422, f"{key} harus angka 0-{hi}.")
     return s
 
@@ -257,22 +311,50 @@ def v_pass(v, required=False):
         if required:
             raise ApiError(422, "Password wajib diisi.")
         return None
-    if not isinstance(v, str) or not PASS_RE.match(v):
+    if not isinstance(v, str) or not PASS_RE.fullmatch(v):
         raise ApiError(422, "Password 8-64 karakter (huruf, angka, @ % ^ * _ + = . , : ; ! ? ~ -).")
     return v
 
 
 def v_dur(v, relative=False):
-    v = str(v if v is not None else "0").strip()
-    ok = REL_DUR_RE.match(v) if relative else DUR_RE.match(v)
-    if not ok:
-        raise ApiError(422, "Format durasi: 30d, 2w, 1m, 12h" + ("" if relative else ", 2026-12-31, never."))
+    if v is None:
+        v = "0"
+    if type(v) is int and v == 0:
+        v = "0"
+    if not isinstance(v, str) or len(v) > 32:
+        raise ApiError(422, "Durasi harus berupa string dengan format yang didukung.")
+    v = v.strip().lower()
+    match = (REL_DUR_RE if relative else DUR_RE).fullmatch(v)
+    if not match:
+        raise ApiError(422, "Format durasi: 30d, 2w, 1m, 12h" + ("" if relative else ", YYYY-MM-DD, never."))
+    if v in ("0", "never"):
+        if relative:
+            raise ApiError(422, "Renew memerlukan durasi positif, misalnya 30d.")
+        return v
+    if re.fullmatch(r"[0-9]+[hdwm]", v, flags=re.ASCII):
+        num, unit = int(v[:-1]), v[-1]
+        unit_seconds = {"h": 3600, "d": 86400, "w": 604800, "m": 2592000}[unit]
+        if num <= 0 or num * unit_seconds > 315576000:
+            raise ApiError(422, "Durasi maksimum adalah 10 tahun.")
+        return v
+    try:
+        d = datetime.datetime.strptime(v, "%Y-%m-%d").date()
+    except (ValueError, TypeError):
+        raise ApiError(422, "Tanggal expiry tidak valid (gunakan YYYY-MM-DD).")
+    if relative:
+        raise ApiError(422, "Renew hanya menerima durasi relatif.")
+    if d > (datetime.date.today() + datetime.timedelta(days=3653)):
+        raise ApiError(422, "Tanggal expiry maksimum 10 tahun dari hari ini.")
     return v
 
 
 def v_owner(v):
-    v = str(v if v not in (None, "") else "-").strip()
-    if not OWNER_RE.match(v):
+    if v in (None, ""):
+        v = "-"
+    if not isinstance(v, str):
+        raise ApiError(422, "Owner harus berupa teks.")
+    v = v.strip()
+    if not OWNER_RE.fullmatch(v):
         raise ApiError(422, "Owner maks 60 karakter tanpa |.")
     return v
 
@@ -378,6 +460,78 @@ def held(*keys):
 
 JOBS = {}
 _jobs_lock = threading.Lock()
+JOB_STATE_FILE = os.environ.get("VPSNAT_WEB_JOBS", os.path.join(os.path.dirname(os.path.abspath(DB)), "web-jobs.json"))
+_JOB_FIELDS = ("id", "kind", "name", "who", "status", "rc", "output", "started", "finished")
+
+
+def _persist_jobs_locked():
+    """Atomically persist bounded, sanitized job metadata with private file permissions."""
+    directory = os.path.dirname(os.path.abspath(JOB_STATE_FILE))
+    os.makedirs(directory, mode=0o700, exist_ok=True)
+    items = sorted(JOBS.values(), key=lambda j: j.get("started", 0), reverse=True)[:200]
+    payload = [{k: j.get(k) for k in _JOB_FIELDS} for j in items]
+    temp = f"{JOB_STATE_FILE}.tmp.{os.getpid()}.{threading.get_ident()}"
+    fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            json.dump(payload, stream, ensure_ascii=False, separators=(",", ":"))
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temp, JOB_STATE_FILE)
+        os.chmod(JOB_STATE_FILE, 0o600)
+        try:
+            dfd = os.open(directory, os.O_RDONLY)
+            try:
+                os.fsync(dfd)
+            finally:
+                os.close(dfd)
+        except OSError:
+            pass
+    except Exception:
+        try:
+            os.unlink(temp)
+        except OSError:
+            pass
+        raise
+
+
+def _load_jobs():
+    """Recover completed jobs; mark operations interrupted across web restarts."""
+    changed = False
+    try:
+        with open(JOB_STATE_FILE, encoding="utf-8") as stream:
+            rows = json.load(stream)
+        if not isinstance(rows, list):
+            return
+        now = int(time.time())
+        for j in rows[:200]:
+            if not isinstance(j, dict) or not isinstance(j.get("id"), str):
+                continue
+            if not re.fullmatch(r"[0-9a-f]{12}", j["id"], flags=re.ASCII):
+                continue
+            if j.get("status") not in ("running", "done", "error", "interrupted"):
+                continue
+            item = {k: j.get(k) for k in _JOB_FIELDS}
+            item["name"] = str(item.get("name") or "")[:64]
+            item["kind"] = str(item.get("kind") or "unknown")[:64]
+            item["who"] = str(item.get("who") or "")[:128]
+            item["output"] = str(item.get("output") or "")[-6000:]
+            if item["status"] == "running":
+                item.update(status="interrupted", rc=124, finished=now,
+                            output="Web service restart saat operasi berlangsung. Status hasil operasi tidak pasti; periksa LXD dan database sebelum mengulangi.")
+                changed = True
+            JOBS[item["id"]] = item
+        if changed:
+            with _jobs_lock:
+                _persist_jobs_locked()
+    except FileNotFoundError:
+        return
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        # Keep serving, but log the recovery problem; never treat corrupt state as active jobs.
+        sys.stderr.write("vpsnat-web: job state tidak dapat dipulihkan; periksa web-jobs.json.\n")
+
+
+_load_jobs()
 
 
 def busy_job(name):
@@ -395,7 +549,6 @@ def ensure_idle(name):
 
 
 def spawn(kind, name, who, fn, locks=(), after=None):
-    ensure_idle(name)
     job = {
         "id": secrets.token_hex(6),
         "kind": kind,
@@ -408,26 +561,53 @@ def spawn(kind, name, who, fn, locks=(), after=None):
         "finished": None,
     }
     with _jobs_lock:
+        # Idle check and job reservation are a single atomic state transition.
+        existing = next((j for j in JOBS.values() if j["name"] == name and j["status"] == "running"), None)
+        if existing:
+            raise ApiError(409, f"VPS sedang diproses (job {existing['id']}). Tunggu sampai selesai.")
+        active = sum(1 for j in JOBS.values() if j["status"] == "running")
+        if active >= 64:
+            raise ApiError(503, "Server sedang sibuk; batas 64 job aktif tercapai. Coba lagi nanti.")
         done = sorted((j for j in JOBS.values() if j["status"] != "running"), key=lambda j: j["started"])
         for j in done[: max(0, len(done) - 150)]:
             del JOBS[j["id"]]
         JOBS[job["id"]] = job
+        try:
+            _persist_jobs_locked()
+        except OSError as exc:
+            JOBS.pop(job["id"], None)
+            raise ApiError(503, "Tidak bisa menyimpan status job secara aman; operasi tidak dijalankan.") from exc
 
     def work():
         try:
             with held(name, *locks):
                 rc, out = fn()
         except Exception as exc:
-            rc, out = 1, f"Error internal: {exc}"
+            rc, out = 1, f"Error internal: {type(exc).__name__}: operasi gagal."
         if after:
             try:
                 after()
             except Exception:
                 pass
-        job.update(status="done" if rc == 0 else "error", rc=rc, output=out, finished=int(time.time()))
+        with _jobs_lock:
+            job.update(status="done" if rc == 0 else "error", rc=rc, output=clean(out), finished=int(time.time()))
+            try:
+                _persist_jobs_locked()
+            except OSError as exc:
+                sys.stderr.write(f"vpsnat-web: gagal menyimpan hasil job {job['id']}: {exc!r}\n")
 
-    threading.Thread(target=work, daemon=True).start()
-    return job
+    thread = threading.Thread(target=work, daemon=True)
+    try:
+        thread.start()
+    except RuntimeError as exc:
+        with _jobs_lock:
+            job.update(status="error", rc=1, output="Tidak bisa memulai worker thread.", finished=int(time.time()))
+            try:
+                _persist_jobs_locked()
+            except OSError:
+                pass
+        raise ApiError(503, "Tidak dapat memulai worker job.") from exc
+    return job_view(job)
 
 
 def job_view(j):
@@ -828,6 +1008,9 @@ def a_create(req):
     name = v_name(b.get("name"))
     if get_row(name):
         raise ApiError(409, "VPS sudah ada.")
+    nesting = b.get("nesting", True)
+    if type(nesting) is not bool:
+        raise ApiError(422, "nesting harus boolean true/false.")
     env = {
         "NAME": name,
         "IMG_KEY": v_choice(b.get("image", "ubuntu22"), IMAGES, "image"),
@@ -839,7 +1022,7 @@ def a_create(req):
         "VTYPE": "2" if v_choice(b.get("backend", "container"), ("container", "vm"), "backend") == "vm" else "1",
         "EXPIRE": v_dur(b.get("expire", "0")),
         "OWNER": v_owner(b.get("owner")),
-        "NESTING": "y" if b.get("nesting", True) else "n",
+        "NESTING": "y" if nesting else "n",
     }
     pw = v_pass(b.get("password"))
     if pw:
@@ -848,7 +1031,7 @@ def a_create(req):
         env["BW_QUOTA_GB"] = v_num(b["bw_quota_gb"], "bw_quota_gb", 1_000_000)
     if b.get("bw_rate_mbit") not in (None, ""):
         env["BW_LIMIT_MBIT"] = v_num(b["bw_rate_mbit"], "bw_rate_mbit", 100_000)
-    job = spawn("create", name, req.who, lambda: cli(["create", name], env, timeout=1800), locks=(ALLOC,))
+    job = spawn("create", name, req.who, lambda: cli(["create", name, str(env["NPORTS"])], env, timeout=1800), locks=(ALLOC,))
     return 202, {"ok": True, "job": job["id"]}
 
 
@@ -1016,10 +1199,11 @@ def a_jobs(req):
 
 @route("GET", r"/api/admin/jobs/(?P<jid>[0-9a-f]{12})", "admin")
 def a_job(req, jid):
-    j = JOBS.get(jid)
-    if not j:
-        raise ApiError(404, "Job tidak ditemukan.")
-    return {"ok": True, "job": job_view(j)}
+    with _jobs_lock:
+        j = JOBS.get(jid)
+        if not j:
+            raise ApiError(404, "Job tidak ditemukan.")
+        return {"ok": True, "job": job_view(j)}
 
 
 # ---------- HTTP server ----------
@@ -1031,23 +1215,67 @@ def load_ui():
         return "<h1>web.html tidak ditemukan</h1>"
 
 
+class BoundedThreadingHTTPServer(ThreadingHTTPServer):
+    """Limit request threads; reject overload instead of exhausting process memory."""
+    max_workers = 64
+
+    def __init__(self, *args, **kwargs):
+        self._worker_slots = threading.BoundedSemaphore(self.max_workers)
+        super().__init__(*args, **kwargs)
+
+    def process_request(self, request, client_address):
+        if not self._worker_slots.acquire(blocking=False):
+            try:
+                request.settimeout(1)
+                request.sendall(b"HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\nContent-Length: 0\r\nRetry-After: 2\r\n\r\n")
+            except OSError:
+                pass
+            finally:
+                self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except Exception:
+            self._worker_slots.release()
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._worker_slots.release()
+
+
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     server_version = "vpsnat-web"
     sys_version = ""
-    timeout = 30
+    timeout = 15
 
     def log_message(self, fmt, *args):
         sys.stderr.write("%s %s\n" % (self.client_ip(), fmt % args))
 
     def client_ip(self):
         c = conf()
+        remote = self.client_address[0]
         if c.get("WEB_TRUST_PROXY") == "1":
-            header = c.get("WEB_IP_HEADER") or "X-Forwarded-For"
-            fwd = (self.headers.get(header) or "").split(",")[-1].strip()
-            if fwd:
-                return fwd[:64]
-        return self.client_address[0]
+            trusted = False
+            try:
+                trusted = ipaddress.ip_address(remote).is_loopback
+            except ValueError:
+                trusted = False
+            # For a non-loopback reverse proxy, require an exact explicitly trusted IP.
+            trusted_ips = {item.strip() for item in (c.get("WEB_TRUST_PROXY_IPS") or "").split(",") if item.strip()}
+            trusted = trusted or remote in trusted_ips
+            if trusted:
+                header = c.get("WEB_IP_HEADER") or "X-Forwarded-For"
+                fwd = (self.headers.get(header) or "").split(",")[-1].strip()
+                if fwd:
+                    try:
+                        return str(ipaddress.ip_address(fwd))
+                    except ValueError:
+                        pass
+        return remote
 
     def is_https(self):
         return conf().get("WEB_TRUST_PROXY") == "1" and self.headers.get("X-Forwarded-Proto", "").lower() == "https"
@@ -1119,23 +1347,73 @@ class Handler(BaseHTTPRequestHandler):
         self.send_bytes(status, "application/json; charset=utf-8", json.dumps(obj).encode(), extra)
 
     def read_body(self):
-        n = to_int(self.headers.get("Content-Length"))
-        if n <= 0:
+        # This server does not implement chunked requests. Reject ambiguous framing.
+        transfer = self.headers.get_all("Transfer-Encoding", [])
+        lengths = self.headers.get_all("Content-Length", [])
+        if transfer:
+            self.close_connection = True
+            raise ApiError(400, "Transfer-Encoding tidak didukung; gunakan Content-Length.")
+        if len(lengths) > 1:
+            self.close_connection = True
+            raise ApiError(400, "Content-Length duplikat tidak diizinkan.")
+        if not lengths:
             return {}
+        raw_n = lengths[0].strip()
+        if not re.fullmatch(r"[0-9]{1,10}", raw_n, flags=re.ASCII):
+            self.close_connection = True
+            raise ApiError(400, "Content-Length tidak valid.")
+        n = int(raw_n, 10)
         if n > MAX_BODY:
+            self.close_connection = True
             raise ApiError(413, "Body terlalu besar.")
-        raw = self.rfile.read(n)
+        if n == 0:
+            self._body_read = True
+            return {}
+        try:
+            # Use read1 + an absolute deadline so a client cannot keep a worker
+            # occupied indefinitely by slowly trickling bytes under the socket timeout.
+            deadline = time.monotonic() + min(float(self.timeout or 15), 15.0)
+            chunks = bytearray()
+            while len(chunks) < n:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("body deadline exceeded")
+                self.connection.settimeout(remaining)
+                part = self.rfile.read1(n - len(chunks))
+                if not part:
+                    break
+                chunks.extend(part)
+            raw = bytes(chunks)
+        except (OSError, TimeoutError):
+            self.close_connection = True
+            raise ApiError(400, "Body request tidak lengkap atau melewati batas waktu.")
+        finally:
+            try:
+                self.connection.settimeout(self.timeout)
+            except OSError:
+                pass
+        if len(raw) != n:
+            self.close_connection = True
+            raise ApiError(400, "Body request terpotong.")
         self._body_read = True
         try:
-            data = json.loads(raw)
-        except ValueError:
-            raise ApiError(400, "Body harus JSON.")
+            data = json.loads(raw, parse_constant=lambda value: (_ for _ in ()).throw(ValueError(value)))
+        except (ValueError, UnicodeDecodeError, RecursionError):
+            self.close_connection = True
+            raise ApiError(400, "Body harus JSON valid (NaN/Infinity dan nesting ekstrem tidak diizinkan).")
         if not isinstance(data, dict):
             raise ApiError(400, "Body harus objek JSON.")
         return data
 
     def handle_any(self, method):
         self._body_read = False
+        if method == "GET":
+            transfer = self.headers.get_all("Transfer-Encoding", [])
+            lengths = self.headers.get_all("Content-Length", [])
+            invalid_length = len(lengths) > 1 or any(not re.fullmatch(r"0+", item.strip(), flags=re.ASCII) for item in lengths)
+            if transfer or invalid_length:
+                self.close_connection = True
+                return self.send_json(400, {"ok": False, "error": "GET tidak menerima body atau framing ambigu."})
         path = urlparse(self.path).path
         if method == "GET" and path == "/":
             nonce = secrets.token_urlsafe(16)
@@ -1177,7 +1455,8 @@ class Handler(BaseHTTPRequestHandler):
                 extra.append(("Set-Cookie", f"{COOKIE}=; Max-Age=0; HttpOnly; SameSite=Strict; Path=/"))
             self.send_json(status, payload, extra)
         except ApiError as exc:
-            if method in ("POST", "DELETE") and not self._body_read and to_int(self.headers.get("Content-Length")) > 0:
+            lengths = self.headers.get_all("Content-Length", [])
+            if method in ("POST", "DELETE") and not self._body_read and lengths:
                 self.close_connection = True  # sisa body belum dibaca; jangan dipakai ulang sebagai request baru
             self.send_json(exc.status, {"ok": False, "error": exc.msg})
         except (BrokenPipeError, ConnectionResetError):
@@ -1202,7 +1481,7 @@ def main():
     port = to_int(c.get("WEB_PORT")) or 8787
     if not c.get("WEB_ADMIN_HASH"):
         sys.stderr.write("PERINGATAN: WEB_ADMIN_HASH belum diset (vpsnat web-setup).\n")
-    srv = ThreadingHTTPServer((bind, port), Handler)
+    srv = BoundedThreadingHTTPServer((bind, port), Handler)
     srv.daemon_threads = True
     sys.stderr.write(f"vpsnat-web listen {bind}:{port}\n")
     try:

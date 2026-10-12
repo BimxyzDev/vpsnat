@@ -1,5 +1,25 @@
 # Changelog
 
+## 3.2.5 — 2026-10-12
+
+### Security & reliability hardening
+- Create/reinstall no longer remove disk quota as a startup fallback; effective disk size is checked before the guest can proceed.
+- Legacy SSH port reservations are included in allocation conflict checks.
+- Lifecycle, port, expiry, and firewall mutations use shared locks; firewall updates stage and validate rules before switching active chains.
+- Duration inputs are bounded before arithmetic; invalid dates and overflow-sized values are rejected.
+- Web validators reject fractional/non-finite values and invalid booleans. Request framing, body deadlines, server worker count, and job persistence/recovery are hardened.
+- Create/resize/clone/reinstall/port changes validate postconditions and preserve reservations or suspension on uncertain failure.
+- Upgrade failures now attempt runtime rollback. Sync-recovered guests stay suspended pending manual review.
+
+
+## 3.2.4 — 2026-10-12
+
+### Perbaikan jumlah port Web
+- Panel mengirim jumlah port create sebagai argumen CLI eksplisit dan tetap mempertahankan `NPORTS` untuk kompatibilitas.
+- CLI memprioritaskan jumlah port eksplisit, memeriksa jumlah hasil alokasi, serta memverifikasi jumlah port unik setelah disimpan ke DB.
+- Bila jumlah port tersimpan tidak sesuai, proses create dibatalkan dan DB/guest dibersihkan agar bug tidak diam-diam menghasilkan VPS dengan port kurang.
+- Tes web menegaskan input 50 diteruskan langsung ke argumen CLI; tes shell memeriksa guard integritas alokasi.
+
 ## 3.2.3 — 2026-10-12
 
 ### Diperbaiki

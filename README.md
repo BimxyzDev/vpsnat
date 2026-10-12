@@ -262,6 +262,16 @@ sudo vpsnat web-domain panel.contoh.com tunnel
 # lalu tambahkan ingress di cloudflared: hostname panel.contoh.com -> http://127.0.0.1:8787
 ```
 
+Untuk reverse proxy buatan sendiri yang terhubung dari **IP non-loopback**, hanya percaya header IP klien dari alamat proxy yang kamu tetapkan secara eksplisit di konfigurasi `/etc/vpsnat/vpsnat.conf`:
+
+```text
+WEB_TRUST_PROXY=1
+WEB_TRUST_PROXY_IPS=10.0.0.2
+WEB_IP_HEADER=X-Forwarded-For
+```
+
+Ganti `10.0.0.2` dengan IP sumber proxy yang benar. Jangan memasukkan IP klien umum atau subnet yang tidak kamu kendalikan. Tanpa daftar ini, header `X-Forwarded-For` dari koneksi non-loopback tidak dipakai untuk rate-limit/login audit. Restart web sesudah mengubah konfigurasi.
+
 ### Tampilan
 
 Tema light dengan aksen biru `#2563eb` dan font Inter. Nama dan logo bisa diganti di `/etc/vpsnat/vpsnat.conf`:
@@ -328,6 +338,10 @@ sudo vpsnat bot status
 ```
 
 Bot memakai `python-telegram-bot` di virtualenv `/etc/vpsnat/bot/venv` dan hanya menjadi UI untuk CLI. Logika provisioning tetap berada di modul Bash.
+
+## Perbaikan jumlah port saat create
+
+Panel mengirim nilai jumlah port tervalidasi ke CLI melalui argumen eksplisit serta environment `NPORTS`. CLI mengecek jumlah port unik yang benar-benar tersimpan di database; jika tidak cocok dengan permintaan (misalnya input 5 tetapi hanya 1 tersimpan), proses create dibatalkan dan tidak dilaporkan sukses. Setelah menimpa file source, jalankan `sudo bash vpsnat upgrade` dari folder repository agar runtime CLI dan file web di `/etc/vpsnat/web/` ikut diperbarui.
 
 ## Update dari GitHub
 
@@ -400,3 +414,8 @@ Database versi lama tetap digunakan. Saat startup/install/upgrade, field tambaha
 ## Disclaimer
 
 VPSNAT memodifikasi firewall, network namespace, storage, dan LXD instances. Uji di staging sebelum diterapkan ke node produksi. Pastikan host memiliki akses console/out-of-band sebelum mengubah jaringan.
+
+
+### Recovery safety note (3.2.5)
+
+When `vpsnat sync` discovers a guest that exists in LXD but has no database record, it imports the guest with `sync-pending` reason and keeps it suspended. Inspect the IP, SSH port, disk limit, and firewall mapping before re-enabling it with `sudo vpsnat unsuspend NAME`. This avoids exposing an orphan guest using guessed allocation metadata.

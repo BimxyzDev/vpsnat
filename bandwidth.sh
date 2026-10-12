@@ -165,7 +165,7 @@ bandwidth_update_usage() {
   fi
 }
 
-vps_bandwidth() {
+_vps_bandwidth_locked() {
   need_root
   local n="$1" action="${2:-show}"
   n=$(pick_vps "$n") || return 1
@@ -195,6 +195,9 @@ vps_bandwidth() {
       ;;
   esac
 }
+
+vps_bandwidth() { with_alloc_lock _vps_bandwidth_locked "$@"; }
+
 
 bandwidth_check_all() {
   local name ip ssh cpu ram disk ports pass created backend exp owner susp plan quota rx tx rate qstate high prevcpu prevts prevrx prevtx reason

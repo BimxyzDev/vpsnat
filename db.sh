@@ -33,6 +33,9 @@ db_normalize_file() {
       while (NF < max) $(NF+1)=""
       if (NF > max) { NF=max }
       if ($10 == "") $10="container"
+      # Legacy DB rows always reserved an SSH port in column 3, even when
+      # older versions left the mapping column empty. Restore that mapping.
+      if (($7 == "" || $7 == "-") && $3 ~ /^[0-9]{1,5}$/ && ($3+0) >= 1 && ($3+0) <= 65535) $7="tcp:" $3 ":22"
       if ($11 == "") $11=0
       if ($12 == "") $12="-"
       if ($13 == "") $13=0
@@ -99,9 +102,11 @@ db_set_fields() {
 }
 
 _db_set_fields_locked() {
-  local name="$1" tmp pairs pair idx val
+  local name="$1" tmp pairs pair idx val found
   shift
   tmp=$(mktemp "${BASE_DIR}/.db.XXXXXX") || return 1
+  found=$(awk -F'|' -v n="$name" '$1==n {found=1} END {print found+0}' "$DB_FILE") || { rm -f "$tmp"; return 1; }
+  [[ "$found" == 1 ]] || { rm -f "$tmp"; return 1; }
   awk -F'|' -v OFS='|' -v n="$name" -v max="$DB_FIELDS" -v pairs="$*" '
     BEGIN {
       count=split(pairs,a," ");

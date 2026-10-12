@@ -2,13 +2,14 @@
 
 set -uo pipefail
 
-VERSION="3.2.3"
+VERSION="3.2.5"
 APP_NAME="vpsnat"
 BASE_DIR="${VPSNAT_BASE_DIR:-/etc/vpsnat}"
 DB_FILE="${BASE_DIR}/vps.db"
 CONF_FILE="${BASE_DIR}/vpsnat.conf"
 LOCK_FILE="${BASE_DIR}/.db.lock"
 ALLOC_LOCK_FILE="${BASE_DIR}/.alloc.lock"
+FW_LOCK_FILE="${BASE_DIR}/.firewall.lock"
 LOG_FILE="${VPSNAT_LOG_FILE:-/var/log/vpsnat.log}"
 NOTIF_DIR="${BASE_DIR}/.notif"
 MONITOR_DIR="${BASE_DIR}/monitor"
@@ -94,9 +95,15 @@ with_lock() {
   return $rc
 }
 
-# Lock allocations across separate CLI, web, and bot processes. Keep this lock
-# until the selected ports/IP are persisted to the DB.
+# Do not trust an environment-provided lock flag. Nested shell functions use a
+# local (non-exported) dynamic-scope marker after the outer lock was acquired.
+unset _VPSNAT_ALLOC_LOCK_HELD
+# Lock all lifecycle mutations across separate CLI, web, bot, and timer processes.
 with_alloc_lock() {
+  if [[ "${_VPSNAT_ALLOC_LOCK_HELD:-0}" == "1" ]]; then
+    "$@"
+    return $?
+  fi
   mkdir -p "$BASE_DIR" || return 1
   exec 8>"$ALLOC_LOCK_FILE" || return 1
   flock -w "${VPSNAT_ALLOC_LOCK_TIMEOUT:-1800}" 8 || {
@@ -104,10 +111,27 @@ with_alloc_lock() {
     exec 8>&-
     return 1
   }
+  local _VPSNAT_ALLOC_LOCK_HELD=1
   "$@"
   local rc=$?
   flock -u 8
   exec 8>&-
+  return "$rc"
+}
+
+# Serialize firewall rebuilds and direct firewall mutations across all processes.
+with_fw_lock() {
+  mkdir -p "$BASE_DIR" || return 1
+  exec 7>"$FW_LOCK_FILE" || return 1
+  flock -w "${VPSNAT_FW_LOCK_TIMEOUT:-60}" 7 || {
+    err "Gagal mengambil lock firewall; operasi jaringan dibatalkan."
+    exec 7>&-
+    return 1
+  }
+  "$@"
+  local rc=$?
+  flock -u 7
+  exec 7>&-
   return "$rc"
 }
 
@@ -132,6 +156,13 @@ cfg_int() {
   v=$(conf_get "$key")
   [[ "$v" =~ ^[0-9]+$ ]] && { echo "$v"; return; }
   echo "$fallback"
+}
+
+# Passwords are fed to `chpasswd` over stdin; reject delimiters, whitespace,
+# newlines and unbounded payloads before constructing that protocol line.
+safe_password() {
+  local value="${1:-}" re='^[A-Za-z0-9@%^*_+=.,:;!?~-]{8,64}$'
+  [[ "$value" =~ $re ]]
 }
 
 ensure_runtime_dirs() {

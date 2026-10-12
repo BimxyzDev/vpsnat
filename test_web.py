@@ -3,6 +3,8 @@
 import http.client
 import http.cookiejar
 import json
+import concurrent.futures
+import stat
 import os
 import socket
 import subprocess
@@ -145,6 +147,8 @@ try:
     check("settings tanpa key kosong dari baris header", "" in call(a, "GET", "/api/admin/settings")[1]["settings"], False)
     check("detail ada password", call(a, "GET", "/api/admin/vps/demo")[1]["vps"]["password"], "NewUserPw2026")
     check("nama tidak valid", call(a, "POST", "/api/admin/vps", {"name": "Bad Name"})[0], 422)
+    check("nama dengan trailing newline ditolak", call(a, "POST", "/api/admin/vps", {"name": "newline\n"}, hdr={"Authorization": "Bearer " + KEY})[0], 422)
+    check("password dengan trailing newline ditolak", call(a, "POST", "/api/admin/vps", {"name": "passnewline", "password": "GoodPass123\n"}, hdr={"Authorization": "Bearer " + KEY})[0], 422)
     check("setting key tidak valid", call(a, "POST", "/api/admin/settings", {"key": "x;rm", "value": "1"})[0], 422)
     st, d = call(a, "POST", "/api/admin/vps", {"name": "newone", "cpu": 4, "ram": 4096, "disk": 30, "image": "ubuntu24"})
     check("create job", st, 202)
@@ -153,9 +157,36 @@ try:
     check("create default 3 port", "NPORTS=3" in j["output"], True)
     st, d = call(a, "POST", "/api/admin/vps", {"name": "bigports", "ports": 50})
     check("create 50 port diterima", st, 202)
-    check("create 50 port diteruskan", "NPORTS=50" in wait_job(a, "/api/admin/jobs", d["job"])["output"], True)
+    job50 = wait_job(a, "/api/admin/jobs", d["job"])
+    check("create 50 port diteruskan lewat env", "NPORTS=50" in job50["output"], True)
+    check("create 50 port diteruskan eksplisit ke CLI", "ARGS: create bigports 50" in job50["output"], True)
+
+    # Dua request untuk nama yang sama harus memiliki satu pemenang saja.
+    barrier = __import__("threading").Barrier(2)
+    def racing_create():
+        op = opener()
+        barrier.wait(timeout=5)
+        return call(op, "POST", "/api/admin/vps", {"name": "racer", "ports": 5}, hdr={"Authorization": "Bearer " + KEY})
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        race_results = list(pool.map(lambda _: racing_create(), range(2)))
+    race_codes = sorted(st for st, _ in race_results)
+    check("dua create serentak nama sama tidak dobel", race_codes, [202, 409])
+    for st_race, race_data in race_results:
+        if st_race == 202:
+            race_job = wait_job(a, "/api/admin/jobs", race_data["job"])
+            check("race create job selesai", race_job["status"], "done")
+    state_file = os.path.join(tmp, "web-jobs.json")
+    check("job state tersimpan", os.path.isfile(state_file), True)
+    if os.path.isfile(state_file):
+        check("permission job state private", stat.S_IMODE(os.stat(state_file).st_mode), 0o600)
     check("create 51 port ditolak", call(a, "POST", "/api/admin/vps", {"name": "toomany", "ports": 51})[0], 422)
     check("create 1 port ditolak (min 2)", call(a, "POST", "/api/admin/vps", {"name": "toofew", "ports": 1})[0], 422)
+    check("fractional port count ditolak", call(a, "POST", "/api/admin/vps", {"name": "floatport", "ports": 5.9}, hdr={"Authorization": "Bearer " + KEY})[0], 422)
+    check("boolean bukan integer port count", call(a, "POST", "/api/admin/vps", {"name": "boolport", "ports": True}, hdr={"Authorization": "Bearer " + KEY})[0], 422)
+    check("nesting string false ditolak", call(a, "POST", "/api/admin/vps", {"name": "neststr", "nesting": "false"}, hdr={"Authorization": "Bearer " + KEY})[0], 422)
+    check("duration overflow ditolak", call(a, "POST", "/api/admin/vps", {"name": "bigdur", "expire": "999999999999d"}, hdr={"Authorization": "Bearer " + KEY})[0], 422)
+    check("expiry tanggal tidak valid ditolak", call(a, "POST", "/api/admin/vps", {"name": "baddate", "expire": "2026-99-99"}, hdr={"Authorization": "Bearer " + KEY})[0], 422)
+    check("angka non-finite JSON ditolak", call(a, "POST", "/api/admin/vps/demo/action", {"action": float("nan")}, hdr={"Authorization": "Bearer " + KEY})[0], 400)
     check("list memuat limit port", call(a, "GET", "/api/admin/vps")[1]["limits"], {"ports_min": 2, "ports_max": 50})
     check("VPS nama legacy bisa dibuka", call(a, "GET", "/api/admin/vps/Legacy_VM.1")[0], 200)
     check("VPS tidak ada -> 404 VPS", call(a, "GET", "/api/admin/vps/tidakada")[1].get("error"), "VPS tidak ditemukan.")
@@ -175,6 +206,21 @@ try:
     k = {"Authorization": "Bearer " + KEY}
     check("API key list", call(anon, "GET", "/api/admin/vps", hdr=k)[0], 200)
     check("API key POST tanpa CSRF header", call(anon, "POST", "/api/admin/vps/demo/action", {"action": "restart"}, hdr=k, csrf=False)[0], 200)
+    raw = socket.create_connection(("127.0.0.1", PORT), timeout=5)
+    raw.sendall((f"GET /api/session HTTP/1.1\r\nHost: 127.0.0.1:{PORT}\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{{}}" ).encode())
+    raw_resp = raw.recv(4096); raw.close()
+    check("GET body ditolak agar framing proxy konsisten", b"400 Bad Request" in raw_resp, True)
+
+    # Duplicate CL and oversize declared body must close request as malformed, without reading a giant body.
+    raw = socket.create_connection(("127.0.0.1", PORT), timeout=5)
+    raw.sendall((f"POST /api/admin/vps/demo/action HTTP/1.1\r\nHost: 127.0.0.1:{PORT}\r\nAuthorization: Bearer {KEY}\r\nContent-Type: application/json\r\nContent-Length: 2\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{{}}" ).encode())
+    raw_resp = raw.recv(4096); raw.close()
+    check("duplicate Content-Length ditolak", b"400 Bad Request" in raw_resp, True)
+    raw = socket.create_connection(("127.0.0.1", PORT), timeout=5)
+    raw.sendall((f"POST /api/admin/vps/demo/action HTTP/1.1\r\nHost: 127.0.0.1:{PORT}\r\nAuthorization: Bearer {KEY}\r\nContent-Type: application/json\r\nContent-Length: 999999999\r\nConnection: close\r\n\r\n" ).encode())
+    raw_resp = raw.recv(4096); raw.close()
+    check("oversized Content-Length ditolak sebelum baca body", b"413 " in raw_resp, True)
+
     hc = http.client.HTTPConnection("127.0.0.1", PORT, timeout=10)
     hc.request("POST", "/api/admin/vps/Bad_Name/action", body=b'{"action":"stop"}', headers={"Authorization": "Bearer " + KEY, "Content-Type": "application/json"})
     r1 = hc.getresponse(); r1.read()
@@ -187,6 +233,30 @@ try:
 finally:
     srv.terminate()
     srv.wait(timeout=5)
+
+# A detached descendant holding the output pipe must not defeat the parent command timeout.
+detached_pidfile = os.path.join(tmp, "detached.pid")
+detached_script = os.path.join(tmp, "spawn-detached.py")
+write(detached_script, "#!/usr/bin/env python3\nimport subprocess,sys,time\nchild=subprocess.Popen([sys.executable,'-c','import time; time.sleep(15)'],start_new_session=True)\nopen(sys.argv[1],'w').write(str(child.pid))\ntime.sleep(15)\n", 0o755)
+runner = subprocess.run([sys.executable, "-c", "import sys,time; sys.path.insert(0,sys.argv[1]); import web; t=time.monotonic(); rc,out=web.run_proc([sys.executable,sys.argv[2],sys.argv[3]],timeout=0.2); print(rc); print(time.monotonic()-t)", ROOT, detached_script, detached_pidfile], cwd=ROOT, env=env, capture_output=True, text=True, timeout=12)
+check("timeout process group tetap bounded saat descendant detach", runner.returncode == 0 and runner.stdout.splitlines()[0] == "124" and float(runner.stdout.splitlines()[1]) < 8.0, True)
+try:
+    with open(detached_pidfile) as pidf:
+        os.kill(int(pidf.read()), 15)
+except (OSError, ValueError):
+    pass
+
+# Simulate a crash/restart: a persisted in-flight job is marked interrupted, never retried blindly.
+recover_path = os.path.join(tmp, "recover-jobs.json")
+write(recover_path, json.dumps([{
+    "id": "abcdef123456", "kind": "create", "name": "crashed", "who": "test",
+    "status": "running", "rc": None, "output": "", "started": int(time.time()), "finished": None
+}]), 0o600)
+recover_env = dict(env, VPSNAT_WEB_JOBS=recover_path)
+recover = subprocess.run([sys.executable, "-c", "import web; print(web.JOBS['abcdef123456']['status'])"], cwd=ROOT, env=recover_env, capture_output=True, text=True, timeout=10)
+check("job aktif saat crash dipulihkan sebagai interrupted", (recover.returncode, recover.stdout.strip()), (0, "interrupted"))
+if os.path.isfile(recover_path):
+    check("state recovery tetap private", stat.S_IMODE(os.stat(recover_path).st_mode), 0o600)
 
 if fails:
     print(f"\n{len(fails)} tes gagal: {fails}")

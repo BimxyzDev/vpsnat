@@ -124,19 +124,57 @@ cmd_install() {
   info "Bot opsional: vpsnat bot-setup | Web panel opsional: vpsnat web-setup"
 }
 
+_upgrade_restore_previous_runtime() {
+  local previous="${INSTALL_DIR}.previous" failed="${INSTALL_DIR}.failed"
+  [[ -d "$previous" ]] || { err "Runtime sebelumnya tidak tersedia untuk rollback (${previous})."; return 1; }
+  rm -rf "$failed" || return 1
+  [[ ! -d "$INSTALL_DIR" ]] || mv "$INSTALL_DIR" "$failed" || return 1
+  mv "$previous" "$INSTALL_DIR" || {
+    [[ ! -e "$INSTALL_DIR" && -d "$failed" ]] && mv "$failed" "$INSTALL_DIR" || true
+    err "Gagal memulihkan runtime sebelumnya."; return 1
+  }
+  cat > "${BIN_PATH}.rollback" <<EOF2
+#!/usr/bin/env bash
+export VPSNAT_APP_DIR="${INSTALL_DIR}"
+exec "${INSTALL_DIR}/vpsnat" "\$@"
+EOF2
+  chmod 755 "${BIN_PATH}.rollback" && mv -f "${BIN_PATH}.rollback" "$BIN_PATH" || { err "Runtime kembali tetapi wrapper CLI gagal dipulihkan."; return 1; }
+  rm -rf "$failed"
+  VPSNAT_APP_DIR="$INSTALL_DIR" write_systemd_services >/dev/null 2>&1 || true
+  [[ ! -f "${BOT_DIR}/bot.py" ]] || { VPSNAT_APP_DIR="$INSTALL_DIR" bot_write_files >/dev/null 2>&1 || true; VPSNAT_APP_DIR="$INSTALL_DIR" bot_write_unit >/dev/null 2>&1 || true; }
+  [[ ! -f "${WEB_DIR}/web.py" ]] || { VPSNAT_APP_DIR="$INSTALL_DIR" web_write_files >/dev/null 2>&1 || true; VPSNAT_APP_DIR="$INSTALL_DIR" web_write_unit >/dev/null 2>&1 || true; }
+  systemctl daemon-reload >/dev/null 2>&1 || true
+  [[ ! -f "${BOT_DIR}/bot.py" ]] || systemctl restart "${BOT_SERVICE}.service" >/dev/null 2>&1 || true
+  [[ ! -f "${WEB_DIR}/web.py" ]] || systemctl restart "${WEB_SERVICE}.service" >/dev/null 2>&1 || true
+  warn "Runtime sebelumnya dipulihkan. Periksa log dan layanan untuk penyebab upgrade gagal."
+}
+
 cmd_upgrade() {
   need_root
-  ensure_runtime_dirs
-  db_init
-  set_default_config
-  install_runtime_tree
-  write_systemd_services
-  systemctl enable --now "${EXPIRE_TIMER}.timer" >/dev/null 2>&1 || true
-  systemctl enable --now "${MONITOR_SERVICE}.service" >/dev/null 2>&1 || true
-  if [[ -f "${BOT_DIR}/bot.py" ]]; then bot_write_files || true; bot_write_unit; systemctl restart "${BOT_SERVICE}.service" 2>/dev/null || true; fi
-  if [[ -f "${WEB_DIR}/web.py" ]]; then web_write_files || true; web_write_unit; systemctl restart "${WEB_SERVICE}.service" 2>/dev/null || true; fi
-  bandwidth_sync_all
-  apply_all_rules
+  local rollback_on_fail=0 source_real install_real
+  source_real=$(realpath "$VPSNAT_APP_DIR" 2>/dev/null || printf '%s' "$VPSNAT_APP_DIR")
+  install_real=$(realpath "$INSTALL_DIR" 2>/dev/null || printf '%s' "$INSTALL_DIR")
+  # No-op if invoked from the installed tree; do not restore a stale .previous.
+  [[ -d "$INSTALL_DIR" && "$source_real" != "$install_real" ]] && rollback_on_fail=1
+  ensure_runtime_dirs || { err "Gagal menyiapkan direktori runtime."; return 1; }
+  db_init || { err "Migrasi database gagal; upgrade dibatalkan."; return 1; }
+  set_default_config || { err "Gagal memeriksa konfigurasi default."; return 1; }
+  install_runtime_tree || { err "Pemasangan runtime gagal; upgrade dibatalkan."; return 1; }
+  write_systemd_services || { (( rollback_on_fail )) && _upgrade_restore_previous_runtime || true; err "Gagal menulis unit systemd."; return 1; }
+  systemctl enable --now "${EXPIRE_TIMER}.timer" >/dev/null 2>&1 || { (( rollback_on_fail )) && _upgrade_restore_previous_runtime || true; err "Gagal mengaktifkan expiry timer."; return 1; }
+  systemctl enable --now "${MONITOR_SERVICE}.service" >/dev/null 2>&1 || { (( rollback_on_fail )) && _upgrade_restore_previous_runtime || true; err "Gagal mengaktifkan monitor."; return 1; }
+  if [[ -f "${BOT_DIR}/bot.py" ]]; then
+    bot_write_files || { (( rollback_on_fail )) && _upgrade_restore_previous_runtime || true; err "Gagal menyalin file bot."; return 1; }
+    bot_write_unit || { (( rollback_on_fail )) && _upgrade_restore_previous_runtime || true; err "Gagal menulis service bot."; return 1; }
+    systemctl restart "${BOT_SERVICE}.service" || { (( rollback_on_fail )) && _upgrade_restore_previous_runtime || true; err "Gagal restart bot service."; return 1; }
+  fi
+  if [[ -f "${WEB_DIR}/web.py" ]]; then
+    web_write_files || { (( rollback_on_fail )) && _upgrade_restore_previous_runtime || true; err "Gagal menyalin file web."; return 1; }
+    web_write_unit || { (( rollback_on_fail )) && _upgrade_restore_previous_runtime || true; err "Gagal menulis service web."; return 1; }
+    systemctl restart "${WEB_SERVICE}.service" || { (( rollback_on_fail )) && _upgrade_restore_previous_runtime || true; err "Gagal restart web service."; return 1; }
+  fi
+  bandwidth_sync_all || { (( rollback_on_fail )) && _upgrade_restore_previous_runtime || true; err "Sync bandwidth gagal."; return 1; }
+  apply_all_rules || { (( rollback_on_fail )) && _upgrade_restore_previous_runtime || true; err "Rekonsiliasi firewall gagal; periksa log sebelum menyatakan upgrade selesai."; return 1; }
   ok "Upgrade ke v${VERSION} selesai. DB lama dimigrasikan ke schema ${DB_FIELDS} field."
 }
 
