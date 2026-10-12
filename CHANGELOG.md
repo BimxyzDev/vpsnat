@@ -1,5 +1,20 @@
 # Changelog
 
+## 3.2.3 — 2026-10-12
+
+### Diperbaiki
+- Renewal tidak lagi membuka suspension manual/resource; hanya suspension dengan alasan `expired` yang dibuka otomatis setelah expiry diperpanjang.
+- Masa tenggang expiry kini berlaku walaupun VPS sudah disuspend karena alasan lain; alasan suspension tetap dipertahankan, dan unsuspend menolak VPS yang masih expired.
+- Perubahan tipe layanan tidak lagi menghapus alasan suspension.
+- Resize/create/reinstall memeriksa hasil perubahan disk; resize mencoba mengembalikan CPU/RAM jika resize disk gagal. Create dibatalkan jika konfigurasi disk atau setup password/SSH gagal.
+- Alokasi port/SSH dikunci lintas proses pada create, port-add, clone, dan sync untuk mencegah dua operasi memilih port yang sama.
+- Upgrade runtime memakai staging dan wrapper CLI atomik, serta mencoba memulihkan runtime sebelumnya jika pergantian folder gagal.
+
+### Ditambahkan
+- `vpsnat update [--check|--force]` mengambil versi dan SHA commit dari GitHub, menguji source dari commit yang sama sebelum memasang, dan mencatat commit terakhir yang berhasil dipasang.
+- README menjelaskan cara update langsung dari repository dan cara update checkout lokal.
+- Tes regresi untuk mempertahankan suspension manual setelah renewal serta memeriksa updater/lock.
+
 ## 3.2.2 — 2026-10-12
 
 ### Diperbaiki

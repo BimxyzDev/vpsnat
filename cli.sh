@@ -8,7 +8,8 @@ Pemakaian: vpsnat [command] [argumen]
 
 Instalasi
   install                         install LXD/NAT/firewall/monitor
-  upgrade                         upgrade code + migrasi DB
+  upgrade                         upgrade code lokal + migrasi DB
+  update [--check|--force]         ambil source terbaru dari GitHub, tes, lalu upgrade
   uninstall                       hapus seluruh VPSNAT + VPS (destruktif)
   check                           cek virtualisasi
 
@@ -144,7 +145,7 @@ main() {
   export PATH="$PATH:/snap/bin"
   local cmd="${1:-}"; shift || true
   case "$cmd" in
-    install) cmd_install "$@";; upgrade) cmd_upgrade "$@";; uninstall) cmd_uninstall "$@";; check) cmd_check;; help|-h|--help) show_help;; relay) relay_dispatch "$@";;
+    install) cmd_install "$@";; update) vpsnat_update "$@";; upgrade) cmd_upgrade "$@";; uninstall) cmd_uninstall "$@";; check) cmd_check;; help|-h|--help) show_help;; relay) relay_dispatch "$@";;
     *)
       need_root; command -v lxc >/dev/null 2>&1 || [[ -x /snap/bin/lxc ]] || die "LXD belum terinstall. Jalankan: ./vpsnat install"; db_init; ensure_net
       case "$cmd" in

@@ -17,6 +17,7 @@ source "${VPSNAT_APP_DIR}/bot.sh"
 source "${VPSNAT_APP_DIR}/web.sh"
 source "${VPSNAT_APP_DIR}/relay.sh"
 source "${VPSNAT_APP_DIR}/install.sh"
+source "${VPSNAT_APP_DIR}/update.sh"
 source "${VPSNAT_APP_DIR}/settings.sh"
 source "${VPSNAT_APP_DIR}/cli.sh"
 

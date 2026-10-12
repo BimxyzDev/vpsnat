@@ -46,7 +46,7 @@ vps_passwd() {
   ok "Password ${n}: ${pass}"
 }
 
-vps_create() {
+_vps_create_locked() {
   need_root
   local name img_key img cpu ram disk pass ssh_port ip extra vtype="container" vmflag="" nports t expire owner exp_epoch
   local plan quota quota_bytes rate normalized plist portmap p
@@ -114,7 +114,11 @@ vps_create() {
   lxc init "$img" "$name" $vmflag -p "$PROFILE" -s "$POOL" || { err "Gagal init."; return 1; }
   lxc config set "$name" limits.cpu "$cpu" || { lxc delete "$name" --force; return 1; }
   lxc config set "$name" limits.memory "${ram}MB" || { lxc delete "$name" --force; return 1; }
-  lxc config device override "$name" root size="${disk}GB" 2>/dev/null || lxc config device set "$name" root size "${disk}GB"
+  if ! lxc config device override "$name" root size="${disk}GB" 2>/dev/null && ! lxc config device set "$name" root size "${disk}GB"; then
+    err "Gagal mengatur ukuran disk ${disk}GB; VPS baru dibatalkan."
+    lxc delete "$name" --force 2>/dev/null || true
+    return 1
+  fi
   lxc config set "$name" boot.autostart true
   if [[ "$vtype" == "container" ]]; then
     lxc config set "$name" limits.memory.swap false
@@ -135,7 +139,7 @@ vps_create() {
 
   wait_guest "$name" || warn "Guest belum responsif; lanjut setup."
   wait_ip "$name" "$ip" || true
-  setup_guest "$name" "$pass"
+  setup_guest "$name" "$pass" || { err "Gagal setup SSH/password guest; VPS baru dibatalkan."; lxc delete "$name" --force 2>/dev/null || true; return 1; }
 
   portmap="tcp:${ssh_port}:22"
   for p in "${alloc[@]:1}"; do portmap+=",tcp:${p}:${p},udp:${p}:${p}"; done
@@ -149,6 +153,10 @@ vps_create() {
   ok "VPS ${name} dibuat (${plan})."
   vps_info "$name"
   info "Port aplikasi: ${alloc[*]:1} (otomatis kontigu)."
+}
+
+vps_create() {
+  with_alloc_lock _vps_create_locked "$@"
 }
 
 vps_list() {
@@ -254,12 +262,17 @@ vps_resize() {
   (( ncpu >= 1 && nram >= 128 && ndisk >= disk )) || { err "Resource tidak valid / disk tidak boleh turun."; return 1; }
   lxc config set "$n" limits.cpu "$ncpu" || return 1
   lxc config set "$n" limits.memory "${nram}MB" || return 1
-  lxc config device set "$n" root size "${ndisk}GB" 2>/dev/null || lxc config device override "$n" root size="${ndisk}GB"
+  if ! lxc config device set "$n" root size "${ndisk}GB" 2>/dev/null && ! lxc config device override "$n" root size="${ndisk}GB"; then
+    err "Gagal mengubah ukuran disk; database tidak diubah."
+    lxc config set "$n" limits.cpu "$cpu" >/dev/null 2>&1 || warn "Rollback CPU gagal; periksa konfigurasi LXD."
+    lxc config set "$n" limits.memory "${ram}MB" >/dev/null 2>&1 || warn "Rollback RAM gagal; periksa konfigurasi LXD."
+    return 1
+  fi
   db_set_fields "$n" "4=$ncpu" "5=$nram" "6=$ndisk" "20=0" "21=0" "22=$(date +%s)"
   if [[ "$vt" == "vm" ]]; then ok "Resource ${n} diperbarui. Restart VM bila guest OS belum melihat perubahan CPU/RAM."; else ok "Resource ${n} diperbarui (live)."; fi
 }
 
-vps_clone() {
+_vps_clone_locked() {
   need_root
   local src new; src=$(pick_vps "${1:-}") || return 1; new="${2:-${NEWNAME:-}}"; [[ -z "$new" ]] && ask new "Nama VPS baru: "
   [[ "$new" =~ ^[a-z0-9][a-z0-9-]{0,30}$ ]] || { err "Nama tidak valid."; return 1; }
@@ -277,6 +290,10 @@ vps_clone() {
   ok "Clone selesai."; vps_info "$new"
 }
 
+vps_clone() {
+  with_alloc_lock _vps_clone_locked "$@"
+}
+
 vps_set_plan() {
   need_root
   local n; n=$(pick_vps "${1:-}") || return 1
@@ -286,7 +303,7 @@ vps_set_plan() {
   fi
   [[ "$plan" =~ ^(shared|dedicated)$ ]] || { err "Tipe harus shared atau dedicated."; return 1; }
   db_set_fields "$n" "14=$plan" "20=0" "21=0" "22=$(date +%s)"
-  if [[ "$plan" == "dedicated" ]]; then db_set_field "$n" 25 -; fi
+  # Mengubah plan tidak boleh menghapus alasan/status suspension yang sudah ada.
   ok "${n}: tipe layanan ${plan}."
 }
 
@@ -302,7 +319,10 @@ vps_reinstall() {
   lxc delete "$n" --force || { err "Gagal menghapus guest lama."; return 1; }
   lxc init "$img" "$n" $vmflag -p "$PROFILE" -s "$POOL" || return 1
   lxc config set "$n" limits.cpu "$cpu"; lxc config set "$n" limits.memory "${ram}MB"
-  lxc config device override "$n" root size="${disk}GB" 2>/dev/null || lxc config device set "$n" root size "${disk}GB"
+  if ! lxc config device override "$n" root size="${disk}GB" 2>/dev/null && ! lxc config device set "$n" root size "${disk}GB"; then
+    err "Gagal mengatur ukuran disk saat reinstall; guest baru belum dijalankan."
+    return 1
+  fi
   lxc config set "$n" boot.autostart true
   if [[ "$vt" == "container" ]]; then lxc config set "$n" limits.memory.swap false; lxc config set "$n" security.nesting true; else lxc config set "$n" security.secureboot false; fi
   set_static_ip "$n" "$ip" || return 1

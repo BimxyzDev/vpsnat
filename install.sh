@@ -12,19 +12,30 @@ install_runtime_tree() {
     return 0
   fi
   stage="${INSTALL_DIR}.new"
-  rm -rf "$stage"
-  mkdir -p "$stage"
-  cp -a "$src/." "$stage/"
-  find "$stage" -type f -name '*.sh' -exec chmod 755 {} +
-  chmod 755 "$stage/vpsnat"
-  rm -rf "$INSTALL_DIR"
-  mv "$stage" "$INSTALL_DIR"
-  cat > "$BIN_PATH" <<EOF2
+  previous="${INSTALL_DIR}.previous"
+  bin_tmp="${BIN_PATH}.new"
+  rm -rf "$stage" || { err "Gagal membersihkan staging directory."; return 1; }
+  mkdir -p "$stage" || { err "Gagal membuat staging directory."; return 1; }
+  cp -a "$src/." "$stage/" || { rm -rf "$stage"; err "Gagal menyalin source ke staging."; return 1; }
+  find "$stage" -type f -name '*.sh' -exec chmod 755 {} + || { rm -rf "$stage"; err "Gagal mengatur permission script."; return 1; }
+  chmod 755 "$stage/vpsnat" || { rm -rf "$stage"; err "Gagal mengatur permission CLI."; return 1; }
+  rm -rf "$previous" || { rm -rf "$stage"; err "Gagal membersihkan backup runtime lama."; return 1; }
+  if [[ -d "$INSTALL_DIR" ]]; then
+    mv "$INSTALL_DIR" "$previous" || { rm -rf "$stage"; err "Gagal memindahkan runtime lama."; return 1; }
+  fi
+  if ! mv "$stage" "$INSTALL_DIR"; then
+    [[ ! -e "$INSTALL_DIR" && -d "$previous" ]] && mv "$previous" "$INSTALL_DIR" || true
+    rm -rf "$stage"
+    err "Gagal memasang runtime baru; pemulihan runtime lama telah dicoba."
+    return 1
+  fi
+  cat > "$bin_tmp" <<EOF2
 #!/usr/bin/env bash
 export VPSNAT_APP_DIR="${INSTALL_DIR}"
 exec "${INSTALL_DIR}/vpsnat" "\$@"
 EOF2
-  chmod 755 "$BIN_PATH"
+  chmod 755 "$bin_tmp" || { rm -f "$bin_tmp"; err "Gagal mengatur permission CLI wrapper."; return 1; }
+  mv -f "$bin_tmp" "$BIN_PATH" || { rm -f "$bin_tmp"; err "Gagal memasang CLI wrapper."; return 1; }
 }
 
 write_systemd_services() {

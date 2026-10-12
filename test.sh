@@ -27,6 +27,7 @@ source "$ROOT/data.sh"
 source "$ROOT/nodes.sh"
 source "$ROOT/web.sh"
 source "$ROOT/install.sh"
+source "$ROOT/update.sh"
 source "$ROOT/settings.sh"
 source "$ROOT/cli.sh"
 
@@ -53,6 +54,12 @@ mapfile -t _alloc <<< "$(alloc_ports 7)"
 grep -q 'mapfile -t alloc' "$ROOT/vps.sh"
 ! grep -q 'read -ra alloc' "$ROOT/vps.sh"
 [[ "$VPS_PORTS_MIN" -eq 2 && "$VPS_PORTS_MAX" -eq 50 ]]
+[[ "$(vpsnat_read_version "$ROOT/core.sh")" == "$VERSION" ]]
+grep -q 'api.github.com/repos/' "$ROOT/update.sh"
+grep -q 'with_alloc_lock _vps_create_locked' "$ROOT/vps.sh"
+grep -q 'with_alloc_lock _port_add_locked' "$ROOT/ports.sh"
+grep -q 'with_alloc_lock _vps_sync_locked' "$ROOT/data.sh"
+grep -q 'Gagal mengubah ukuran disk; database tidak diubah.' "$ROOT/vps.sh"
 
 bandwidth_rate_normalize 100 >/dev/null
 grep -q 'BW_QUOTA_GB:-.*QUOTA:-' "$ROOT/bandwidth.sh"
@@ -66,6 +73,14 @@ bandwidth_set() { TEST_QUOTA="$2"; TEST_RATE="$3"; }
 export NONINTERACTIVE=1 QUOTA=321 RATE=77
 vps_bandwidth legacy set
 [[ "$TEST_QUOTA" == "321" && "$TEST_RATE" == "77" ]]
+
+# Regresi: perpanjangan tidak boleh membuka suspension manual.
+printf 'manual|10.10.10.4|20012|1|1024|10|tcp:20012:22|pass|2026-01-01|container|0|-|1|shared|0|0|0|0|0|0|0|0|0|0|manual\n' >> "$DB_FILE"
+need_root() { :; }  # test terisolasi; tidak mengubah host/LXD.
+bandwidth_reset() { :; }
+vps_renew manual 30d >/dev/null
+[[ "$(db_field manual 13)" == "1" ]]
+[[ "$(db_field manual 25)" == "manual" ]]
 resource_cpu_limit_count '0-3' | grep -qx 4
 parse_duration 30d >/dev/null
 

@@ -12,7 +12,7 @@ ports_remove_entry() {
   cur=$(ports_get "$name"); new=$(echo "$cur" | tr ',' '\n' | grep -vxF "$entry" | paste -sd, -); [[ -z "$new" ]] && new="-"; ports_set "$name" "$new"
 }
 
-port_add() {
+_port_add_locked() {
   need_root
   local n; n=$(pick_vps "${1:-}") || return 1
   local proto count int_start range start end p i ip added=0
@@ -39,6 +39,8 @@ port_add() {
   fw_save
   ok "${added} port ditambahkan: ${start}-${end} → ${n}"
 }
+
+port_add() { with_alloc_lock _port_add_locked "$@"; }
 
 port_range_add() { port_add "$@"; }
 

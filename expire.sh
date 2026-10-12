@@ -50,7 +50,7 @@ _vps_unsuspend() {
   local n="$1" reason exp now
   reason=$(db_field "$n" 25); reason=${reason:--}
   exp=$(db_field "$n" 11); exp=${exp:-0}; now=$(date +%s)
-  if [[ "$reason" == "expired" && "$exp" != "0" && "$exp" -le "$now" ]]; then
+  if [[ "$exp" != "0" ]] && (( exp <= now )); then
     err "${n} masih expired. Renew/set-expire dulu."
     return 1
   fi
@@ -76,7 +76,7 @@ vps_setexpire() {
 vps_renew() {
   need_root
   local n; n=$(pick_vps "${1:-}") || return 1
-  local dur="${2:-${EXPIRE:-}}" cur now base add e
+  local dur="${2:-${EXPIRE:-}}" cur now base add e reason
   [[ -z "$dur" ]] && ask dur "Perpanjang berapa lama (30d, 2w, 1m): "
   [[ "$dur" =~ ^[0-9]+[hdwm]$ ]] || { err "Renew hanya menerima durasi relatif."; return 1; }
   now=$(date +%s); cur=$(db_field "$n" 11); cur=${cur:-0}; base=$cur
@@ -85,7 +85,8 @@ vps_renew() {
   db_set_field "$n" 11 "$e"
   # Renewal membuka kuota periode baru dan menghapus suspension karena quota/resource.
   bandwidth_reset "$n" >/dev/null 2>&1 || true
-  if [[ "$(db_field "$n" 13)" == "1" ]]; then _vps_unsuspend "$n" || true; fi
+  reason=$(db_field "$n" 25); reason=${reason:--}
+  if [[ "$(db_field "$n" 13)" == "1" && "$reason" == "expired" ]]; then _vps_unsuspend "$n" || true; fi
   ok "${n} diperpanjang ${dur}. Expired baru: $(fmt_epoch "$e")"
 }
 
@@ -121,11 +122,19 @@ vps_expire_check() {
     exp=$(db_field "$name" 11); exp=${exp:-0}; susp=$(db_field "$name" 13); susp=${susp:-0}
     [[ "$exp" != "0" ]] || continue
     if (( exp <= now )); then
+      # Keep an existing manual/resource suspension reason, but expiry/grace still applies.
       if [[ "$susp" != "1" ]]; then
         _vps_suspend_auto "$name" "expired"
-        msg="⏸ VPS ${name} EXPIRED & disuspend. Otomatis dihapus dalam ${grace} hari jika tidak diperpanjang."; info "$msg"; tg_notify "$msg"
-      elif (( now-exp >= grace*86400 )) && [[ "$(db_field "$name" 25)" == "expired" ]]; then
-        msg="🗑 VPS ${name} melewati masa tenggang ${grace} hari → DIHAPUS permanen."; info "$msg"; tg_notify "$msg"; _vps_purge "$name"; rm -f "$NOTIF_DIR/${name}."* 2>/dev/null || true
+        susp=1
+      fi
+      if [[ ! -e "$NOTIF_DIR/${name}.expired" ]]; then
+        touch "$NOTIF_DIR/${name}.expired"
+        msg="⏸ VPS ${name} EXPIRED. VPS ditahan selama ${grace} hari dan dihapus permanen jika tidak diperpanjang."; info "$msg"; tg_notify "$msg"
+      fi
+      if (( now-exp >= grace*86400 )); then
+        msg="🗑 VPS ${name} melewati masa tenggang ${grace} hari → DIHAPUS permanen."; info "$msg"; tg_notify "$msg"
+        _vps_purge "$name"
+        rm -f "$NOTIF_DIR/${name}."* 2>/dev/null || true
       fi
       continue
     fi

@@ -38,6 +38,7 @@ vpsnat/
 ├── nodes.sh
 ├── bot.sh
 ├── install.sh
+├── update.sh
 ├── settings.sh
 ├── cli.sh
 ├── bot.py
@@ -228,7 +229,7 @@ sudo vpsnat web-setup 8787 admin 'PasswordKuat123'   # non-interaktif
 sudo vpsnat web status
 ```
 
-**Update panel setelah `git pull`:** jalankan `sudo bash vpsnat upgrade` dari folder repo. Perintah ini menyalin ulang `web.py` dan `web.html` ke `/etc/vpsnat/web/` lalu me-restart `vpsnat-web`. Mengedit file di folder repo saja tidak mengubah panel yang sedang berjalan, karena server membaca `web.html` dari `/etc/vpsnat/web/`.
+**Update dari repository:** gunakan `sudo vpsnat update` agar source terbaru diambil langsung dari branch `main`, dites, lalu dipasang. Untuk memastikan apakah ada update tanpa memasang perubahan, gunakan `vpsnat update --check`. Perintah `sudo bash vpsnat upgrade` tetap tersedia untuk memasang perubahan dari checkout lokal. Panel membaca `web.html` dari `/etc/vpsnat/web/`, sehingga file yang diubah secara lokal baru aktif setelah upgrade.
 
 Setup membuat service `vpsnat-web`, hash password admin (scrypt), dan **API key** (ditampilkan sekali). Port harus 1024-65535 dan tidak boleh masuk range port VPS (`PORT_MIN-PORT_MAX`). Jika memakai `ufw`: `ufw allow 8787/tcp`.
 
@@ -328,14 +329,22 @@ sudo vpsnat bot status
 
 Bot memakai `python-telegram-bot` di virtualenv `/etc/vpsnat/bot/venv` dan hanya menjadi UI untuk CLI. Logika provisioning tetap berada di modul Bash.
 
-## Upgrade
+## Update dari GitHub
+
+Updater mengambil SHA commit dan nomor versi dari repository GitHub `BimxyzDev/vpsnat` (branch `main`), mengunduh source pada commit tersebut, menjalankan `test.sh`, lalu menjalankan proses upgrade hanya jika tes lulus. SHA yang berhasil dipasang dicatat di `/etc/vpsnat/source.commit`, agar pemeriksaan update tidak hanya bergantung pada nomor versi.
 
 ```bash
-cd vpsnat && git pull
-sudo bash vpsnat upgrade
+# Cek versi/commit terbaru, tanpa mengubah instalasi
+vpsnat update --check
+
+# Ambil, tes, dan pasang source terbaru
+sudo vpsnat update
+
+# Paksa pasang ulang commit terbaru yang sama
+sudo vpsnat update --force
 ```
 
-Upgrade menyalin ulang semua modul, menjalankan migrasi DB, dan me-restart bot serta web panel jika terpasang.
+Updater membutuhkan koneksi internet serta `curl`, `tar`, dan Python 3. Source baru diuji sebelum pemasangan. `install_runtime_tree` menyiapkan staging directory dan mempertahankan runtime sebelumnya sebagai `/usr/local/lib/vpsnat.previous` jika perlu pemulihan. Untuk instalasi lama yang belum memiliki command `update`, jalankan `git pull` di checkout sumber lalu `sudo bash vpsnat upgrade` satu kali. Setelah itu gunakan updater. Untuk pengembangan lokal yang belum di-push, `sudo bash vpsnat upgrade` tetap memasang checkout lokal; command itu tidak mengambil source dari GitHub.
 
 ## Testing
 

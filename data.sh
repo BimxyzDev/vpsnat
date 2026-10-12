@@ -60,7 +60,7 @@ host_stats() {
   lxc list -c ns4mDlt --format table 2>/dev/null; echo; lxc storage info "$POOL" 2>/dev/null | sed -n '1,15p'
 }
 
-vps_sync() {
+_vps_sync_locked() {
   need_root
   local name ip ssh cpu ram disk vt
   while IFS= read -r name; do
@@ -72,6 +72,8 @@ vps_sync() {
   done < <(lxc list -c n --format csv 2>/dev/null)
   apply_all_rules; bandwidth_sync_all; ok "Sync selesai."
 }
+
+vps_sync() { with_alloc_lock _vps_sync_locked "$@"; }
 
 set_public_ip() {
   local cur ip="${1:-}"; cur=$(pub_ip); [[ -z "$ip" ]] && { read -rp "Public IP [${cur}]: " ip; ip=${ip:-$cur}; }

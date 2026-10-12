@@ -2,12 +2,13 @@
 
 set -uo pipefail
 
-VERSION="3.2.2"
+VERSION="3.2.3"
 APP_NAME="vpsnat"
 BASE_DIR="${VPSNAT_BASE_DIR:-/etc/vpsnat}"
 DB_FILE="${BASE_DIR}/vps.db"
 CONF_FILE="${BASE_DIR}/vpsnat.conf"
 LOCK_FILE="${BASE_DIR}/.db.lock"
+ALLOC_LOCK_FILE="${BASE_DIR}/.alloc.lock"
 LOG_FILE="${VPSNAT_LOG_FILE:-/var/log/vpsnat.log}"
 NOTIF_DIR="${BASE_DIR}/.notif"
 MONITOR_DIR="${BASE_DIR}/monitor"
@@ -91,6 +92,23 @@ with_lock() {
   flock -u 9
   exec 9>&-
   return $rc
+}
+
+# Lock allocations across separate CLI, web, and bot processes. Keep this lock
+# until the selected ports/IP are persisted to the DB.
+with_alloc_lock() {
+  mkdir -p "$BASE_DIR" || return 1
+  exec 8>"$ALLOC_LOCK_FILE" || return 1
+  flock -w "${VPSNAT_ALLOC_LOCK_TIMEOUT:-1800}" 8 || {
+    err "Gagal mengambil lock alokasi port; operasi lain mungkin masih berjalan."
+    exec 8>&-
+    return 1
+  }
+  "$@"
+  local rc=$?
+  flock -u 8
+  exec 8>&-
+  return "$rc"
 }
 
 conf_get() {
