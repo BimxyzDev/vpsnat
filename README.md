@@ -159,6 +159,7 @@ vpsnat relay status
 Di node yang dilepas: `vpsnat relay detach` (mengembalikan `PUBLIC_IP` dan alokasi port ke semula). Pemasangan manual (tanpa token) tetap ada: `vpsnat relay attach` di node lalu `vpsnat relay peer-add <node-ip> <node-public-key> [min-max] [label]` di relay, dan `vpsnat relay slice <min-max>` di node untuk membatasi alokasi port.
 
 Catatan:
+- Host relay boleh sekaligus menjalankan VPS sendiri: `node-add` otomatis menghindari port VPS lokal dan menolak range yang bentrok. Untuk mencadangkan range host sejak awal: `vpsnat relay slice 20000-24999` di relay sebelum `node-add`.
 - Node yang sudah punya VPS di luar slice barunya akan diperingatkan saat `join`; port di luar slice tidak diteruskan relay.
 - Relay yang dibuat versi lama (satu node, seluruh range) harus `detach` lalu `init` ulang untuk memakai mode ini.
 - Panel web (default port `8787`) tidak termasuk range yang diteruskan relay; pasang domain/HTTPS di node (`vpsnat web-domain`) atau gunakan jalur sendiri.

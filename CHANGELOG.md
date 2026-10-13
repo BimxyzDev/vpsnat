@@ -10,6 +10,7 @@
 ### Relay multi-node
 - **Satu relay, banyak node**: `vpsnat relay node-add <label> [min-max]` di relay mengalokasikan IP tunnel dan slice port (default 5000 port) lalu mencetak token; `vpsnat relay join <token>` di node menyelesaikan pemasangan tanpa bolak-balik. Tambahan: `node-list`, `node-del`, `slice`. Node baru/dihapus diterapkan live tanpa restart tunnel node lain.
 - `join` membatasi alokasi port VPS node ke slice-nya (`NODE_PORT_MIN/MAX`, dibaca `core.sh`) dan mengisi `PUBLIC_IP` dengan IP relay; `detach` mengembalikannya.
+- `node-add`/`peer-add` menghindari port VPS milik host relay sendiri (atau slice host dari `relay slice`) dan menolak range yang bentrok, agar VPS lokal tidak dialihkan ke node.
 - `peer-add` menerima range dan label opsional. Relay mode lama (1 node, seluruh range) harus `detach` + `init` ulang.
 
 ### UI

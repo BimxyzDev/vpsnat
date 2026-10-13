@@ -109,6 +109,14 @@ grep -q -- '--dport 20000:24999 -j DNAT --to-destination 10.250.0.2' <<< "$rende
 grep -q -- '--dport 30000:39999 -j DNAT --to-destination 10.250.0.3' <<< "$rendered"
 grep -q 'AllowedIPs = 10.250.0.3/32' <<< "$rendered"
 ! grep -q -- '--dport 20000:59999' <<< "$rendered"
+# host relay yang juga punya VPS: port VPS lokal tidak boleh masuk slice node
+saved_db="$DB_FILE"; saved_nodes="$RELAY_NODES_FILE"
+DB_FILE="$tmp/relay-local.db"; RELAY_NODES_FILE="$tmp/relay-empty.conf"; : > "$RELAY_NODES_FILE"
+printf 'web|10.10.10.2|20000|1|512|5|tcp:20000:22,tcp:20001:20001|pw|2026-10-01|container|0|-\n' > "$DB_FILE"
+[[ "$(relay_next_slice 5000)" == "20002-25001" ]]
+! relay_range_check 20000 24999 >/dev/null 2>&1
+relay_range_check 30000 34999 >/dev/null 2>&1
+DB_FILE="$saved_db"; RELAY_NODES_FILE="$saved_nodes"
 printf 'NODE_PORT_MIN=30000\nNODE_PORT_MAX=34999\n' > "$tmp/slice.conf"
 [[ "$(VPSNAT_BASE_DIR="$tmp/slice" bash -c 'mkdir -p "$VPSNAT_BASE_DIR"; cp "'"$tmp"'/slice.conf" "$VPSNAT_BASE_DIR/vpsnat.conf"; source "'"$ROOT"'/core.sh"; echo "$PORT_MIN-$PORT_MAX-$SSH_BASE"')" == "30000-34999-30000" ]]
 

@@ -156,6 +156,20 @@ relay_ready() {
   fi
 }
 
+# Range port publik yang sudah terpakai: node terdaftar + slice/VPS di host ini sendiri
+# (host relay bisa juga menjalankan VPS; port itu tidak boleh dialihkan ke node lain).
+relay_used_ranges() {
+  local nmin nmax
+  if [[ -s "$RELAY_NODES_FILE" ]]; then awk -F'|' 'NF>=5{print $4"|"$5"|node "$1}' "$RELAY_NODES_FILE"; fi
+  nmin=$(conf_get NODE_PORT_MIN); nmax=$(conf_get NODE_PORT_MAX)
+  if [[ "$nmin" =~ ^[0-9]+$ && "$nmax" =~ ^[0-9]+$ ]]; then
+    echo "${nmin}|${nmax}|slice host ini"
+  elif [[ -s "$DB_FILE" ]]; then
+    awk -F'|' '{n=split($7,p,","); for(i=1;i<=n;i++){split(p[i],q,":"); v=q[2]+0; if(v>0){if(!lo||v<lo)lo=v; if(v>hi)hi=v}}} END{if(lo) print lo"|"hi"|VPS di host ini"}' "$DB_FILE"
+  fi
+  return 0
+}
+
 relay_next_ip() {
   local n ip used
   used=$(cut -d'|' -f2 "$RELAY_NODES_FILE" 2>/dev/null || true)
@@ -168,24 +182,24 @@ relay_next_ip() {
 
 relay_next_slice() {
   local size="$1" start="$PORT_MIN" a b
-  while IFS='|' read -r _ _ _ a b; do
+  while IFS='|' read -r a b _; do
     [[ -n "$a" ]] || continue
     (( start + size - 1 < a )) && break
     (( b + 1 > start )) && start=$((b + 1))
-  done < <(sort -t'|' -k4,4n "$RELAY_NODES_FILE" 2>/dev/null || true)
+  done < <(relay_used_ranges | sort -t'|' -k1,1n)
   (( start + size - 1 <= PORT_MAX )) || return 1
   echo "${start}-$((start + size - 1))"
 }
 
 relay_range_check() {
-  local a="$1" b="$2" ra rb
+  local a="$1" b="$2" ra rb why
   [[ "$a" =~ ^[0-9]+$ && "$b" =~ ^[0-9]+$ ]] || { err "Range port harus berbentuk MIN-MAX (angka)."; return 1; }
   (( a >= PORT_MIN && b <= PORT_MAX && a <= b )) || { err "Range harus di dalam ${PORT_MIN}-${PORT_MAX}."; return 1; }
   (( b - a + 1 >= 100 )) || { err "Range minimal 100 port."; return 1; }
-  while IFS='|' read -r _ _ _ ra rb; do
+  while IFS='|' read -r ra rb why; do
     [[ -n "$ra" ]] || continue
-    (( b < ra || a > rb )) || { err "Range ${a}-${b} bentrok dengan node lain (${ra}-${rb})."; return 1; }
-  done < "$RELAY_NODES_FILE"
+    (( b < ra || a > rb )) || { err "Range ${a}-${b} bentrok dengan ${why} (${ra}-${rb})."; return 1; }
+  done < <(relay_used_ranges)
 }
 
 relay_register_node() {
@@ -390,6 +404,11 @@ relay_node_slice() {
   [[ "$range" =~ ^([0-9]+)-([0-9]+)$ ]] || { err "Pakai: vpsnat relay slice <MIN-MAX|off>"; return 1; }
   a="${BASH_REMATCH[1]}"; b="${BASH_REMATCH[2]}"
   (( a >= 1024 && b <= 65535 && a <= b )) || { err "Range tidak valid."; return 1; }
+  if [[ -s "$RELAY_NODES_FILE" ]]; then
+    local clash
+    clash=$(awk -F'|' -v a="$a" -v b="$b" 'NF>=5 && !(b<$4+0 || a>$5+0){print $1; exit}' "$RELAY_NODES_FILE")
+    [[ -z "$clash" ]] || { err "Range ${a}-${b} bentrok dengan node '${clash}' di relay ini."; return 1; }
+  fi
   conf_set NODE_PORT_MIN "$a"; conf_set NODE_PORT_MAX "$b"
   ok "Alokasi port VPS di node ini dibatasi ke ${a}-${b}."
 }
