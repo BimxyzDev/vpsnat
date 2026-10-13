@@ -115,31 +115,53 @@ VPSNAT tidak mengunci provider. Mode `direct` memakai public IPv4 dan port inbou
 Internet → Public IPv4 host → VPSNAT DNAT → LXD VPS
 ```
 
-### Relay
+### Relay (1 relay, banyak node)
 
-Relay meneruskan TCP/UDP pada range `PORT_MIN-PORT_MAX` ke satu node VPSNAT melalui WireGuard. Node tetap memakai aturan DNAT VPSNAT yang sama.
+Relay adalah VPS kecil dengan IP publik. Relay meneruskan TCP/UDP port buyer ke node VPSNAT lewat WireGuard; VPS buyer, database, dan web panel tetap di node. Tiap node mendapat **slice port publik sendiri** (default 5000 port per node, dari range `20000-59999`) dan IP tunnel `10.250.0.x`, jadi satu relay bisa melayani sampai 8 node dengan default.
 
-Di relay:
+```text
+Buyer -> IP relay:port -> WireGuard -> node (slice port itu) -> VPS buyer
+```
+
+**1. Di relay (sekali)**
 
 ```bash
 vpsnat relay init
 ```
 
-Di node:
+**2. Di relay, per node**
 
 ```bash
-vpsnat relay attach <relay-ip:port> <relay-public-key>
+vpsnat relay node-add node1              # slice otomatis (mis. 20000-24999)
+vpsnat relay node-add node2 30000-39999  # atau tentukan range sendiri (node besar)
 ```
 
-Lalu kembali ke relay:
+Perintah ini membuat peer, mengalokasikan IP tunnel dan slice, lalu mencetak satu baris `vpsnat relay join <token>`.
+
+**3. Di node, tempel baris itu**
 
 ```bash
-vpsnat relay peer-add 10.250.0.2 <node-public-key>
+vpsnat relay join <token>
 ```
 
-Firewall provider/cloud pada relay tetap harus mengizinkan UDP port WireGuard serta TCP/UDP range publik. VPSNAT tidak dapat membuka firewall akun provider dari dalam server.
+Node tersambung ke relay, alokasi port VPS dibatasi ke slice-nya, dan `PUBLIC_IP` diset ke IP relay agar info SSH untuk buyer benar. Token memuat private key WireGuard node: jangan dibagikan, cukup dipakai sekali.
 
-Versi 3.1 memasangkan satu relay ke satu NAT node. Beberapa NAT node dapat memakai relay yang berbeda.
+**4. Firewall provider relay**: buka UDP `51820` dan TCP/UDP untuk semua slice yang dipakai. VPSNAT tidak bisa membuka firewall akun provider dari dalam server.
+
+Kelola dari relay:
+
+```bash
+vpsnat relay node-list            # label, IP tunnel, slice, status handshake
+vpsnat relay node-del node1       # hapus node (aturan dan peer dicabut tanpa restart tunnel)
+vpsnat relay status
+```
+
+Di node yang dilepas: `vpsnat relay detach` (mengembalikan `PUBLIC_IP` dan alokasi port ke semula). Pemasangan manual (tanpa token) tetap ada: `vpsnat relay attach` di node lalu `vpsnat relay peer-add <node-ip> <node-public-key> [min-max] [label]` di relay, dan `vpsnat relay slice <min-max>` di node untuk membatasi alokasi port.
+
+Catatan:
+- Node yang sudah punya VPS di luar slice barunya akan diperingatkan saat `join`; port di luar slice tidak diteruskan relay.
+- Relay yang dibuat versi lama (satu node, seluruh range) harus `detach` lalu `init` ulang untuk memakai mode ini.
+- Panel web (default port `8787`) tidak termasuk range yang diteruskan relay; pasang domain/HTTPS di node (`vpsnat web-domain`) atau gunakan jalur sendiri.
 
 ## Repository
 
@@ -150,10 +172,7 @@ Target repository: `BimxyzDev/vpsnat`. Tree di repo sengaja dipecah per modul ag
 Untuk deployment dengan beberapa node (misal: relay Linode + beberapa node NAT UpCloud/lainnya),
 `vpsnat nodes` memberi ringkasan gabungan tanpa perlu SSH satu-satu ke tiap server.
 
-Prasyarat: semua node terhubung ke **relay WireGuard yang sama** (lihat bagian Universal
-Network/Relay di atas), sehingga tiap node punya IP tunnel `10.250.0.x` yang bisa saling
-dijangkau tanpa membuka firewall publik. Dashboard menarik data lewat SSH ke IP tunnel
-tersebut — pastikan SSH key sudah ditukar (`ssh-copy-id`) antar node sebelum didaftarkan.
+Prasyarat: semua node terhubung ke **relay WireGuard yang sama** (lihat bagian Relay di atas), sehingga tiap node punya IP tunnel `10.250.0.x`. Jalankan dashboard **di relay**: relay bisa SSH langsung ke IP tunnel tiap node, sedangkan antar-node lewat relay butuh aturan forward tambahan yang tidak disediakan VPSNAT. Pastikan SSH key sudah ditukar (`ssh-copy-id root@10.250.0.x`) sebelum didaftarkan; IP tunnel tiap node terlihat di `vpsnat relay node-list`.
 
 Di tiap node, beri label agar mudah dikenali dashboard node lain:
 

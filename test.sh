@@ -94,6 +94,24 @@ grep -q '\["bandwidth", name, "set", quota, rate\]' "$ROOT/bot.py"
 grep -q 'relay_dispatch' "$ROOT/cli.sh"
 [[ -f "$ROOT/relay.sh" ]]
 
+# relay multi-node: slice port, IP tunnel, render config, slice di node
+RELAY_NODES_FILE="$tmp/relay-nodes.conf"
+printf 'n1|10.250.0.2|%s|20000|24999\nbig|10.250.0.3|%s|30000|39999\n' "$(printf 'A%.0s' {1..43})=" "$(printf 'B%.0s' {1..43})=" > "$RELAY_NODES_FILE"
+[[ "$(relay_next_slice 5000)" == "25000-29999" ]]
+[[ "$(relay_next_slice 10000)" == "40000-49999" ]]
+[[ "$(relay_next_ip)" == "10.250.0.4" ]]
+! relay_range_check 21000 22000 >/dev/null 2>&1
+! relay_range_check 25000 25050 >/dev/null 2>&1
+relay_range_check 25000 29999 >/dev/null 2>&1
+rendered=$(relay_render_server_config 51820 PRIVKEY)
+[[ "$(grep -c '^\[Peer\]' <<< "$rendered")" == "2" ]]
+grep -q -- '--dport 20000:24999 -j DNAT --to-destination 10.250.0.2' <<< "$rendered"
+grep -q -- '--dport 30000:39999 -j DNAT --to-destination 10.250.0.3' <<< "$rendered"
+grep -q 'AllowedIPs = 10.250.0.3/32' <<< "$rendered"
+! grep -q -- '--dport 20000:59999' <<< "$rendered"
+printf 'NODE_PORT_MIN=30000\nNODE_PORT_MAX=34999\n' > "$tmp/slice.conf"
+[[ "$(VPSNAT_BASE_DIR="$tmp/slice" bash -c 'mkdir -p "$VPSNAT_BASE_DIR"; cp "'"$tmp"'/slice.conf" "$VPSNAT_BASE_DIR/vpsnat.conf"; source "'"$ROOT"'/core.sh"; echo "$PORT_MIN-$PORT_MAX-$SSH_BASE"')" == "30000-34999-30000" ]]
+
 pick_vps() { echo "$1"; }
 bandwidth_set() { TEST_QUOTA="$2"; TEST_RATE="$3"; }
 export NONINTERACTIVE=1 QUOTA=321 RATE=77

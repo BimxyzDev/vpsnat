@@ -80,9 +80,13 @@ Web Panel (UI + API)
   web-domain [status|remove]
 
 Relay / Universal Network
-  relay init
-  relay peer-add <node-ip> <node-wireguard-public-key>
-  relay attach <relay-ip:port> <relay-wireguard-public-key> [node-ip]
+  relay init                                   (di relay)
+  relay node-add <label> [min-max]             (di relay) daftarkan node, cetak token join
+  relay join <token>                           (di node) tempel token dari node-add
+  relay node-list | node-del <label>           (di relay)
+  relay peer-add <node-ip> <node-public-key> [min-max] [label]   (manual, di relay)
+  relay attach <relay-ip:port> <relay-public-key> [node-ip]      (manual, di node)
+  relay slice <min-max|off>                    (di node) batasi alokasi port VPS
   relay detach
   relay status
   relay on|off|restart|logs

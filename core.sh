@@ -151,6 +151,13 @@ conf_set() {
   fi
 }
 
+# Slice port per node (di-set oleh `vpsnat relay join|slice`). Kosong = range penuh PORT_MIN-PORT_MAX.
+_node_pmin=$(conf_get NODE_PORT_MIN); _node_pmax=$(conf_get NODE_PORT_MAX)
+if [[ "$_node_pmin" =~ ^[0-9]+$ && "$_node_pmax" =~ ^[0-9]+$ ]] && (( _node_pmin <= _node_pmax )); then
+  PORT_MIN="$_node_pmin"; PORT_MAX="$_node_pmax"; SSH_BASE="$_node_pmin"
+fi
+unset _node_pmin _node_pmax
+
 cfg_int() {
   local key="$1" fallback="$2" v
   v=$(conf_get "$key")

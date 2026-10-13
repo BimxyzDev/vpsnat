@@ -7,6 +7,11 @@
 - **`get.sh` (Bash URL)**: install atau update ke commit terbaru dengan satu perintah `curl -fsSL .../get.sh | sudo bash` (opsi `--check`, `--force`; env `VPSNAT_REPO`, `VPSNAT_BRANCH`, `VPSNAT_REF`, `VPSNAT_SKIP_TESTS`). Berfungsi juga untuk instalasi lama yang belum punya `vpsnat update`.
 - Dokumentasi API lengkap di README dan tab **API** pada panel: autentikasi, kode status, job, parameter tiap endpoint, contoh curl yang bisa disalin, pencarian endpoint, serta endpoint user `/api/me*`.
 
+### Relay multi-node
+- **Satu relay, banyak node**: `vpsnat relay node-add <label> [min-max]` di relay mengalokasikan IP tunnel dan slice port (default 5000 port) lalu mencetak token; `vpsnat relay join <token>` di node menyelesaikan pemasangan tanpa bolak-balik. Tambahan: `node-list`, `node-del`, `slice`. Node baru/dihapus diterapkan live tanpa restart tunnel node lain.
+- `join` membatasi alokasi port VPS node ke slice-nya (`NODE_PORT_MIN/MAX`, dibaca `core.sh`) dan mengisi `PUBLIC_IP` dengan IP relay; `detach` mengembalikannya.
+- `peer-add` menerima range dan label opsional. Relay mode lama (1 node, seluruh range) harus `detach` + `init` ulang.
+
 ### UI
 - Dark mode otomatis mengikuti perangkat, token warna konsisten, focus ring, area aman (safe area) untuk HP.
 - Sheet detail VPS sebagai dialog (Esc/klik latar menutup, scroll terkunci); kartu VPS bisa dibuka dengan keyboard.
