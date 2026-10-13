@@ -333,12 +333,6 @@ async function renderUser() {
         <input id="newpw" type="password" placeholder="Kosongkan untuk random" autocomplete="new-password">
         <div style="margin-top:8px"><button data-a="mepasswd">Ganti password</button></div>
       </div>
-      <div class="card danger"><h2>Reinstall</h2>
-        <div class="warnt" style="margin-bottom:6px">Semua data di dalam VPS akan hilang. Port, resource, dan expired tetap.</div>
-        <label>Image</label><select id="rimg">${opts(IMAGES, 'ubuntu22')}</select>
-        <label>Ketik nama VPS (<b>${esc(v.name)}</b>) untuk konfirmasi</label><input id="rconf" autocapitalize="none">
-        <div style="margin-top:10px"><button class="bad" data-a="mereinstall">Reinstall</button></div>
-      </div>
     </div>
     <pre id="joblog" style="display:none"></pre>
     <div class="foot">${esc(S.brand)} · VPSNAT Manager</div>`;
@@ -462,10 +456,8 @@ const API_DOC = [
     ['POST', '/api/me/action', 'Start, stop, atau restart VPS sendiri.', [['action', 'string', 'ya', 'start | stop | restart']], '{"action":"restart"}', OUT_JSON, '400 jika CLI menolak (mis. VPS disuspend), 409 jika VPS sedang diproses job.'],
     ['POST', '/api/me/passwd', 'Ganti password root VPS sendiri.', [['password', 'string', 'tidak', '8-64 karakter: huruf, angka, @ % ^ * _ + = . , : ; ! ? ~ -. Kosong = acak.']],
       '{"password":"PasswordBaru2026"}', '{"ok":true,"output":"…","password":"PasswordBaru2026"}', 'Sesi lain untuk VPS yang sama dicabut.'],
-    ['POST', '/api/me/reinstall', 'Install ulang OS. Semua data guest hilang; port, resource, dan expired tetap.',
-      [['image', 'string', 'tidak', 'Default ubuntu22. ' + IMG_NOTE], ['confirm', 'string', 'ya', 'Harus sama persis dengan nama VPS']],
-      '{"image":"debian12","confirm":"demo"}', JOB202, '403 jika VPS disuspend atau kuota bandwidth habis, 422 jika confirm salah.'],
-    ['GET', '/api/me/jobs/{id}', 'Status job reinstall milik sendiri.', [], null, JOB_JSON, 'status: running, done, error, atau interrupted. Polling sampai bukan running.'],
+    ['POST', '/api/me/reinstall', 'Dinonaktifkan: selalu membalas 403. Install ulang OS hanya bisa dilakukan admin.',
+      [], '{}', '{"ok":false,"error":"Ubah OS dinonaktifkan. Hubungi admin."}', 'Ubah OS buyer sengaja dimatikan agar tidak disalahgunakan. Admin tetap bisa lewat /api/admin/vps/{name}/reinstall.'],
   ]],
   ['Admin: host & VPS', [
     ['GET', '/api/admin/host', 'Info host: IP publik, CPU, RAM, disk, uptime, domain panel, dan hitungan VPS.', [], null,
@@ -636,10 +628,6 @@ const A = {
   reveal: b => { const e = $('#pw'); const hid = e.textContent.startsWith('•'); e.textContent = hid ? e.dataset.pw : '••••••••'; b.lastChild.textContent = hid ? ' Sembunyikan' : ' Tampilkan'; },
   mepower: b => act(b, async () => { const d = await api('POST', '/api/me/action', {action: b.dataset.p}); toast(b.dataset.p + ' OK'); setTimeout(renderUser, 800); }),
   mepasswd: b => act(b, async () => { const d = await api('POST', '/api/me/passwd', {password: $('#newpw').value || undefined}); toast('Password diganti'); await renderUser(); const e = $('#pw'); if (e && d.password) { e.dataset.pw = d.password; e.textContent = d.password; } }),
-  mereinstall: b => act(b, async () => {
-    const d = await api('POST', '/api/me/reinstall', {image: val('rimg'), confirm: val('rconf')});
-    toast('Reinstall dimulai'); track(d.job, '/api/me/jobs', () => renderUser().then(() => { const l = $('#joblog'); if (l) l.style.display = 'none'; }));
-  }),
   tab: b => { S.tab = b.dataset.k; renderAdmin(); },
   refresh: () => tabVps(),
   open: r => openVps(r.dataset.n),

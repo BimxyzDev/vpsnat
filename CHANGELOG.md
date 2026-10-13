@@ -13,6 +13,9 @@
 - Placeholder loading, empty state, tab mobile muat tanpa scroll, input 16px agar iOS tidak zoom, sheet layar penuh di HP.
 - Gagal jaringan ditangani dengan pesan jelas; polling job dilanjutkan otomatis setelah koneksi kembali.
 
+### Diubah
+- **Ubah OS (reinstall) oleh buyer dinonaktifkan**: tombol Reinstall dihapus dari panel user dan `POST /api/me/reinstall` selalu membalas 403. Admin tetap bisa reinstall lewat `POST /api/admin/vps/{name}/reinstall`.
+
 ### Tes
 - `test_web.py` menguji manifest, service worker, ikon, dan CSP; `test.sh` memeriksa `get.sh`.
 

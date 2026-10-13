@@ -960,13 +960,8 @@ def me_passwd(req):
 
 @route("POST", "/api/me/reinstall", "user")
 def me_reinstall(req):
-    name = req.auth["name"]
-    r = need_row(name)
-    if r["suspended"] == 1 or r["quota_susp"] == 1:
-        raise ApiError(403, "VPS sedang disuspend atau kuota bandwidth habis. Hubungi admin.")
-    if req.body.get("confirm") != name:
-        raise ApiError(422, "Ketik nama VPS untuk konfirmasi.")
-    return do_reinstall(req, name, v_choice(req.body.get("image", "ubuntu22"), IMAGES, "image"))
+    # Ubah OS oleh buyer dinonaktifkan; hanya admin yang boleh (POST /api/admin/vps/{name}/reinstall).
+    raise ApiError(403, "Ubah OS dinonaktifkan. Hubungi admin.")
 
 
 @route("GET", r"/api/me/jobs/(?P<jid>[0-9a-f]{12})", "user")

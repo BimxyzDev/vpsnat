@@ -8,7 +8,7 @@ VPSNAT adalah manager VPS berbasis LXD + Linux NAT untuk provisioning, port forw
 - Model shared vs dedicated, auto-suspend, expiry, snapshot, dan relay WireGuard
 - Multi-node dashboard
 - Bot Telegram untuk admin
-- **Web panel**: login admin dan user, resource live, reinstall, ganti password, REST API admin
+- **Web panel**: login admin dan user, resource live, ganti password, REST API admin
 - **PWA**: panel bisa dipasang sebagai aplikasi di HP/desktop (butuh HTTPS), dengan dark mode otomatis
 - **Domain + HTTPS** otomatis (nginx + Let's Encrypt) atau Cloudflare Tunnel
 
@@ -254,7 +254,7 @@ Kelola: `vpsnat web [on|off|restart|status|logs|key|passwd|domain|remove]`
 | Admin | Username + password dari `web-setup` (UI), atau header `Authorization: Bearer <API key>` (API) |
 | User | Nama VPS **atau** port SSH + password root VPS |
 
-User bisa melihat info/port/SSH, resource live (CPU, RAM, disk, bandwidth), start/stop/restart, ganti password, dan reinstall (wajib mengetik nama VPS). Admin bisa semuanya plus create, delete, suspend, resize, renew, expire, owner, plan, bandwidth, port, settings, sync, dan dashboard multi-node.
+User bisa melihat info/port/SSH, resource live (CPU, RAM, disk, bandwidth), start/stop/restart, dan ganti password. Ubah OS (reinstall) oleh user sengaja dinonaktifkan; hanya admin yang bisa. Admin bisa semuanya plus create, delete, suspend, resize, renew, expire, owner, plan, bandwidth, port, settings, sync, dan dashboard multi-node.
 
 ### Domain + HTTPS
 
@@ -324,7 +324,7 @@ Semua endpoint ada di bawah `/api/`. Tab **API** di panel admin memuat dokumenta
 | 200 / 202 | Berhasil / job dimulai |
 | 400 | Perintah CLI gagal (pesan di `error`) |
 | 401 | Belum login atau API key salah |
-| 403 | Peran tidak sesuai, header `X-Requested-With` hilang, atau VPS disuspend (reinstall user) |
+| 403 | Peran tidak sesuai, header `X-Requested-With` hilang, atau endpoint dinonaktifkan (`/api/me/reinstall`) |
 | 404 | Endpoint, VPS, atau job tidak ditemukan |
 | 409 | VPS sudah ada atau sedang diproses job lain |
 | 413 | Body lebih dari 64 KB |
@@ -334,7 +334,7 @@ Semua endpoint ada di bawah `/api/`. Tab **API** di panel admin memuat dokumenta
 
 #### Job (operasi panjang)
 
-Create, delete, dan reinstall membalas `202 {"ok": true, "job": "<id 12 hex>"}`. Polling `GET /api/admin/jobs/{id}` (user: `/api/me/jobs/{id}`) tiap 2-3 detik sampai `status` bukan `running`.
+Create, delete, dan reinstall membalas `202 {"ok": true, "job": "<id 12 hex>"}`. Polling `GET /api/admin/jobs/{id}` (user: `/api/me/jobs/{id}` tersisa untuk kompatibilitas) tiap 2-3 detik sampai `status` bukan `running`.
 
 ```json
 {"ok": true, "job": {"id": "a1b2c3d4e5f6", "kind": "create", "name": "demo",
@@ -391,7 +391,7 @@ curl -s -H "$H" $BASE/api/admin/vps/demo
 | GET | `/api/me/resources` | - | CPU, RAM, disk, network, bandwidth live |
 | POST | `/api/me/action` | `action`: `start`/`stop`/`restart` | |
 | POST | `/api/me/passwd` | `password?` | 8-64 karakter `A-Za-z0-9@%^*_+=.,:;!?~-`; kosong = acak |
-| POST | `/api/me/reinstall` | `image?`, `confirm` (= nama VPS) | Job; 403 jika disuspend/kuota habis |
+| POST | `/api/me/reinstall` | - | **Dinonaktifkan**: selalu `403`. Reinstall hanya lewat endpoint admin |
 | GET | `/api/me/jobs/{id}` | - | Job milik sendiri |
 
 #### Admin: VPS
