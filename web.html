@@ -2,96 +2,146 @@
 <html lang="id">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="robots" content="noindex,nofollow">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#2563eb">
+<meta name="application-name" content="VPSNAT">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="VPSNAT">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" type="image/png" href="/icon-192.png">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <title>VPSNAT Panel</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
-:root{--bg:#f8fafc;--card:#fff;--card2:#f1f5f9;--line:#e2e8f0;--tx:#0f172a;--mut:#64748b;--ac:#2563eb;--ac2:#1d4ed8;--acs:#eff6ff;--ok:#16a34a;--oks:#f0fdf4;--warn:#d97706;--warns:#fffbeb;--bad:#dc2626;--bads:#fef2f2;--dark:#0f172a;--r:14px;--sh:0 1px 2px rgba(15,23,42,.05),0 6px 18px rgba(15,23,42,.05)}
+:root{color-scheme:light dark;--bg:#f8fafc;--card:#fff;--card2:#f1f5f9;--line:#e2e8f0;--tx:#0f172a;--mut:#64748b;--ac:#2563eb;--ac2:#1d4ed8;--acx:#2563eb;--acs:#eff6ff;--ok:#16a34a;--okx:#15803d;--oks:#f0fdf4;--warn:#d97706;--warnx:#b45309;--warns:#fffbeb;--bad:#dc2626;--badx:#b91c1c;--bads:#fef2f2;--dark:#0f172a;--nav:rgba(255,255,255,.88);--th:#f8fafc;--dgl:#fecaca;--dgb:#fffafa;--ph:#94a3b8;--fld:#fff;--ring:rgba(37,99,235,.18);--r:14px;--sh:0 1px 2px rgba(15,23,42,.05),0 6px 18px rgba(15,23,42,.05)}
+@media(prefers-color-scheme:dark){:root{--bg:#0b1220;--card:#111a2e;--card2:#18233c;--line:#25324d;--tx:#e6ebf5;--mut:#97a6c0;--acx:#7db3ff;--acs:#15244a;--okx:#4ade80;--oks:#0f2a1c;--warnx:#fbbf24;--warns:#2e2410;--badx:#f87171;--bads:#2f1517;--dark:#060b16;--nav:rgba(11,18,32,.86);--th:#0f1830;--dgl:#5b2428;--dgb:#1a1214;--ph:#64748b;--fld:#0d1527;--ring:rgba(125,179,255,.28);--sh:0 1px 2px rgba(0,0,0,.35),0 6px 18px rgba(0,0,0,.25)}}
 *{box-sizing:border-box}
-html,body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.55 'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;-webkit-font-smoothing:antialiased}
-a{color:var(--ac)}
-.nav{position:sticky;top:0;z-index:10;background:rgba(255,255,255,.92);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
-.nav .in{max-width:1100px;margin:0 auto;padding:10px 14px;display:flex;align-items:center;justify-content:space-between;gap:10px}
-.logo{display:flex;align-items:center;gap:10px;font-weight:700;font-size:17px;letter-spacing:-.2px}
+[hidden]{display:none!important}
+html,body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.55 'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;-webkit-font-smoothing:antialiased;-webkit-text-size-adjust:100%}
+a{color:var(--acx)}
+:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:6px}
+.netbar{background:var(--warn);color:#fff;text-align:center;font-size:12.5px;font-weight:600;padding:6px 12px}
+.nav{position:sticky;top:0;z-index:10;background:var(--nav);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+.nav .in{max-width:1100px;margin:0 auto;padding:10px max(14px,env(safe-area-inset-right)) 10px max(14px,env(safe-area-inset-left));display:flex;align-items:center;justify-content:space-between;gap:10px}
+.logo{display:flex;align-items:center;gap:10px;font-weight:700;font-size:17px;letter-spacing:-.2px;min-width:0}
+.logo>span:last-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .logo .mk{width:34px;height:34px;border-radius:10px;background:var(--ac);color:#fff;display:grid;place-items:center;flex:none;overflow:hidden}
 .logo .mk img{width:100%;height:100%;object-fit:cover}
 .logo small{color:var(--mut);font-weight:500;font-size:12px}
-#app{max-width:1100px;margin:0 auto;padding:18px 14px 40px}
-h1,h2,h3{margin:0 0 10px;letter-spacing:-.2px}h1{font-size:22px}h2{font-size:16px}h3{font-size:13px;color:var(--mut);font-weight:600;text-transform:uppercase;letter-spacing:.4px}
+#app{max-width:1100px;margin:0 auto;padding:18px max(14px,env(safe-area-inset-right)) calc(40px + env(safe-area-inset-bottom)) max(14px,env(safe-area-inset-left))}
+h1,h2,h3{margin:0 0 10px;letter-spacing:-.2px}h1{font-size:22px;line-height:1.25}h2{font-size:16px}h3{font-size:12px;color:var(--mut);font-weight:600;text-transform:uppercase;letter-spacing:.5px}
 .top{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:14px}
-.top h1{margin:0;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.top h1{margin:0;display:flex;align-items:center;gap:10px;flex-wrap:wrap;word-break:break-all}
 .card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:16px;margin-bottom:14px;box-shadow:var(--sh)}
 .grid{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));margin-bottom:14px}.grid>.card{margin-bottom:0}
-.kv{display:grid;grid-template-columns:110px 1fr;gap:8px 10px;align-items:center}.kv span:nth-child(odd){color:var(--mut)}
+.kv{display:grid;grid-template-columns:110px 1fr;gap:8px 10px;align-items:center}.kv span:nth-child(odd){color:var(--mut)}.kv span{min-width:0;overflow-wrap:anywhere}
 .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
-input,select{background:#fff;color:var(--tx);border:1px solid var(--line);border-radius:10px;padding:10px 12px;font:inherit;min-width:0;width:100%;transition:border-color .15s,box-shadow .15s}
-input:focus,select:focus{outline:0;border-color:var(--ac);box-shadow:0 0 0 3px rgba(37,99,235,.15)}
-input::placeholder{color:#94a3b8}
+input,select{background:var(--fld);color:var(--tx);border:1px solid var(--line);border-radius:10px;padding:10px 12px;font:inherit;min-width:0;width:100%;transition:border-color .15s,box-shadow .15s}
+input:focus,select:focus{outline:0;border-color:var(--ac);box-shadow:0 0 0 3px var(--ring)}
+input::placeholder{color:var(--ph)}
+input[type=checkbox]{width:auto;accent-color:var(--ac)}
 label{display:block;color:var(--mut);font-size:12px;font-weight:500;margin:10px 0 4px}
-button{display:inline-flex;align-items:center;justify-content:center;gap:6px;background:var(--ac);color:#fff;border:1px solid var(--ac);border-radius:10px;padding:9px 15px;font:inherit;font-weight:600;cursor:pointer;transition:background .15s,transform .05s}
+button{display:inline-flex;align-items:center;justify-content:center;gap:6px;background:var(--ac);color:#fff;border:1px solid var(--ac);border-radius:10px;padding:9px 15px;min-height:38px;font:inherit;font-weight:600;cursor:pointer;transition:background .15s,transform .05s,border-color .15s}
 button:hover{background:var(--ac2)}button:active{transform:translateY(1px)}
 button:disabled{opacity:.55;cursor:not-allowed}
-button.sec{background:#fff;border-color:var(--line);color:var(--tx)}button.sec:hover{background:var(--card2)}
+button.sec{background:var(--card);border-color:var(--line);color:var(--tx)}button.sec:hover{background:var(--card2)}
 button.ok{background:var(--ok);border-color:var(--ok)}button.ok:hover{background:#15803d}
 button.bad{background:var(--bad);border-color:var(--bad)}button.bad:hover{background:#b91c1c}
 button.warn{background:var(--warn);border-color:var(--warn)}button.warn:hover{background:#b45309}
-button.sm{padding:5px 10px;font-size:12px;border-radius:8px}
+button.sm{padding:5px 10px;min-height:30px;font-size:12px;border-radius:8px}
 .ic{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;flex:none}
 .tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;background:var(--card2);padding:5px;border-radius:12px;width:fit-content;max-width:100%}
-.tabs button{background:transparent;border-color:transparent;color:var(--mut);padding:7px 14px}
-.tabs button:hover{background:#fff;color:var(--tx)}
-.tabs button.on{background:#fff;color:var(--ac);border-color:var(--line);box-shadow:0 1px 2px rgba(15,23,42,.06)}
+.tabs button{background:transparent;border-color:transparent;color:var(--mut);padding:7px 14px;min-height:34px}
+.tabs button:hover{background:var(--card);color:var(--tx)}
+.tabs button.on{background:var(--card);color:var(--acx);border-color:var(--line);box-shadow:0 1px 2px rgba(15,23,42,.08)}
 .badge{display:inline-block;padding:2px 10px;border-radius:99px;font-size:12px;font-weight:600;background:var(--card2);color:var(--mut)}
-.b-RUNNING{background:var(--oks);color:var(--ok)}.b-STOPPED,.b-MISSING{background:var(--bads);color:var(--bad)}.b-SUSPEND{background:var(--warns);color:var(--warn)}
+.b-RUNNING{background:var(--oks);color:var(--okx)}.b-STOPPED,.b-MISSING{background:var(--bads);color:var(--badx)}.b-SUSPEND{background:var(--warns);color:var(--warnx)}
 .bar{height:8px;background:var(--card2);border-radius:99px;overflow:hidden}
 .bar i{display:block;height:100%;background:var(--ac);border-radius:99px;transition:width .4s}.bar i.md{background:var(--warn)}.bar i.hi{background:var(--bad)}
-.m{margin-bottom:12px}.mh{display:flex;justify-content:space-between;font-size:12px;color:var(--mut);margin-bottom:5px}.mh span:first-child{color:var(--tx);font-weight:600}
-.tw{overflow-x:auto}table{width:100%;border-collapse:collapse;min-width:640px}
-th,td{text-align:left;padding:10px 10px;border-bottom:1px solid var(--line);white-space:nowrap}th{color:var(--mut);font-size:12px;font-weight:600;background:#fafbfd}
+.m{margin-bottom:12px}.mh{display:flex;justify-content:space-between;gap:8px;font-size:12px;color:var(--mut);margin-bottom:5px}.mh span:first-child{color:var(--tx);font-weight:600}
+.tw{overflow-x:auto;-webkit-overflow-scrolling:touch}table{width:100%;border-collapse:collapse;min-width:640px}
+th,td{text-align:left;padding:10px 10px;border-bottom:1px solid var(--line);white-space:nowrap}th{color:var(--mut);font-size:12px;font-weight:600;background:var(--th)}
+td.wrap{white-space:normal;min-width:180px}
 tr.click{cursor:pointer}tr.click:hover{background:var(--acs)}
 code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12.5px}
 code{background:var(--card2);padding:2px 7px;border-radius:6px;word-break:break-all}
 pre{background:var(--dark);color:#e2e8f0;border-radius:10px;padding:12px;overflow:auto;max-height:280px;white-space:pre-wrap;word-break:break-word;margin:10px 0 0}
-.mut{color:var(--mut)}.err{color:var(--bad)}.warnt{color:var(--warn)}
+.mut{color:var(--mut)}.err{color:var(--badx)}.warnt{color:var(--warnx)}
+.spin{display:inline-block;width:14px;height:14px;border:2px solid var(--line);border-top-color:var(--ac);border-radius:50%;animation:spin .7s linear infinite;vertical-align:-2px;margin-right:6px}
+@keyframes spin{to{transform:rotate(360deg)}}
+.skel{height:84px;border-radius:var(--r);background:linear-gradient(90deg,var(--card2),var(--card),var(--card2));background-size:200% 100%;animation:sh 1.2s ease-in-out infinite}
+@keyframes sh{from{background-position:200% 0}to{background-position:-200% 0}}
 .login{max-width:430px;margin:5vh auto 0}
 .login .hero{text-align:center;margin-bottom:18px}
 .login .hero .mk{width:56px;height:56px;border-radius:16px;background:var(--ac);color:#fff;display:grid;place-items:center;margin:0 auto 12px;overflow:hidden;box-shadow:0 8px 20px rgba(37,99,235,.3)}
 .login .hero .mk img{width:100%;height:100%;object-fit:cover}.login .hero .mk .ic{width:28px;height:28px}
 .login .hero p{margin:4px 0 0;color:var(--mut)}
-.sheet{position:fixed;inset:0;background:rgba(15,23,42,.5);overflow:auto;z-index:20;padding:12px}
-.sheet>.in{max-width:920px;margin:0 auto;background:var(--bg);border:1px solid var(--line);border-radius:18px;padding:16px}
-.toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);background:var(--dark);color:#fff;border-left:4px solid var(--ok);border-radius:10px;padding:11px 18px;z-index:50;max-width:92vw;box-shadow:0 10px 30px rgba(15,23,42,.3)}
+.sheet{position:fixed;inset:0;background:rgba(6,11,22,.55);-webkit-backdrop-filter:blur(2px);backdrop-filter:blur(2px);overflow:auto;overscroll-behavior:contain;z-index:20;padding:12px;animation:fade .15s ease-out}
+.sheet:focus{outline:0}
+.sheet>.in{max-width:920px;margin:0 auto;background:var(--bg);border:1px solid var(--line);border-radius:18px;padding:16px;animation:rise .18s ease-out}
+@keyframes fade{from{opacity:0}}@keyframes rise{from{opacity:0;transform:translateY(12px)}}
+.toast{position:fixed;left:50%;bottom:calc(22px + env(safe-area-inset-bottom));transform:translateX(-50%);background:var(--dark);color:#fff;border:1px solid rgba(255,255,255,.08);border-left:4px solid var(--ok);border-radius:10px;padding:11px 18px;z-index:50;max-width:92vw;box-shadow:0 10px 30px rgba(0,0,0,.3);overflow-wrap:anywhere}
 .toast.e{border-left-color:var(--bad)}
-.danger{border-color:#fecaca;background:#fffafa}
+.danger{border-color:var(--dgl);background:var(--dgb)}
 .foot{text-align:center;color:var(--mut);font-size:12px;margin-top:20px}
 .cols2{display:grid;gap:10px;grid-template-columns:1fr 1fr}.cols3{display:grid;gap:10px;grid-template-columns:repeat(3,1fr)}
 .stats{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));margin-bottom:14px}
 .stat{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:12px 14px;box-shadow:var(--sh)}
 .stat b{display:block;font-size:20px;letter-spacing:-.3px;line-height:1.2}.stat span{color:var(--mut);font-size:12px}.stat small{display:block;color:var(--mut);font-size:11px;margin-top:2px}
-.stat:last-child:nth-child(odd){grid-column:1/-1}
-.stat.ok b{color:var(--ok)}.stat.warn b{color:var(--warn)}.stat.bad b{color:var(--bad)}
+.stat.ok b{color:var(--okx)}.stat.warn b{color:var(--warnx)}.stat.bad b{color:var(--badx)}
 .fbar{display:grid;gap:8px;grid-template-columns:1fr 150px;margin-bottom:12px}
 .vgrid{display:grid;gap:12px;grid-template-columns:repeat(auto-fill,minmax(290px,1fr))}
-.vc{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:14px;box-shadow:var(--sh);cursor:pointer;transition:border-color .15s,box-shadow .15s}
-.vc:hover{border-color:var(--ac);box-shadow:0 4px 14px rgba(37,99,235,.12)}
+.vc{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:14px;box-shadow:var(--sh);cursor:pointer;transition:border-color .15s,box-shadow .15s,transform .15s}
+.vc:hover{border-color:var(--ac);box-shadow:0 4px 14px rgba(37,99,235,.14);transform:translateY(-1px)}
 .vc .vh{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:2px}.vc .vh b{font-size:15px;word-break:break-all}
 .vc .vs{color:var(--mut);font-size:12px;margin-bottom:8px}
 .chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}.chip{background:var(--card2);color:var(--tx);border-radius:8px;padding:2px 8px;font-size:12px;font-weight:500}
 .vc .vf{display:flex;justify-content:space-between;gap:8px;color:var(--mut);font-size:12px;margin-top:8px}
 .vc .m{margin-bottom:0}
-.empty{text-align:center;color:var(--mut);padding:26px 10px}
-@media(max-width:520px){.fbar{grid-template-columns:1fr}.cols3{grid-template-columns:1fr 1fr}.kv{grid-template-columns:92px 1fr}.nav .in{padding:9px 12px}}
+.empty{text-align:center;color:var(--mut);padding:30px 10px}.empty .ic{width:30px;height:30px;display:block;margin:0 auto 8px;opacity:.6}
+.pwa-hint{margin-top:10px;font-size:12px;color:var(--mut)}
+.doc h3{margin:18px 0 8px}.doc h3:first-child{margin-top:0}
+.doc .lead{color:var(--mut);margin:0 0 10px}
+.facts{display:grid;gap:8px 12px;grid-template-columns:150px 1fr;margin:0 0 6px}.facts>b{font-weight:600}.facts>span{color:var(--mut);min-width:0;overflow-wrap:anywhere}
+details.ep{border:1px solid var(--line);border-radius:12px;margin-bottom:8px;background:var(--card)}
+details.ep>summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:12px}
+details.ep>summary::-webkit-details-marker{display:none}
+details.ep>summary:hover{background:var(--card2)}
+details.ep[open]>summary{border-bottom:1px solid var(--line);border-bottom-left-radius:0;border-bottom-right-radius:0}
+.ep .pth{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12.5px;word-break:break-all}
+.ep .sd{color:var(--mut);font-size:12px;margin-left:auto;text-align:right}
+.ep .bd{padding:12px}.ep .bd p{margin:0 0 8px}
+.mth{font:700 11px/1 ui-monospace,Menlo,Consolas,monospace;padding:5px 7px;border-radius:6px;min-width:56px;text-align:center;flex:none}
+.m-GET{background:var(--oks);color:var(--okx)}.m-POST{background:var(--acs);color:var(--acx)}.m-DELETE{background:var(--bads);color:var(--badx)}
+.ep table{min-width:460px;margin-bottom:8px}.ep th,.ep td{padding:6px 8px;font-size:12.5px}
+.ep pre{max-height:240px}
+.ep .cp{float:right;margin:0 0 6px 8px}
+.apisrch{margin-bottom:10px}
+@media(max-width:520px){
+  input,select{font-size:16px}
+  .fbar{grid-template-columns:1fr}.cols3{grid-template-columns:1fr 1fr}.kv{grid-template-columns:92px 1fr}.facts{grid-template-columns:1fr}
+  .stats .stat:last-child:nth-child(odd){grid-column:1/-1}
+  .tabs{width:100%;overflow-x:auto;flex-wrap:nowrap}.tabs button{white-space:nowrap;flex:1 1 auto;padding:7px 10px}
+  .sheet{padding:0}.sheet>.in{border-radius:0;border:0;min-height:100%}
+  .ep .sd{display:none}
+}
+@media(max-width:380px){.cols2{grid-template-columns:1fr}}
+@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
 </head>
 <body>
+<div id="net" class="netbar" role="status" hidden>Offline — data tidak diperbarui sampai koneksi kembali.</div>
 <div id="nav"></div>
 <div id="app"></div>
 <script nonce="{{NONCE}}">
 'use strict';
-const S = {role:null, name:null, tab:'vps', vps:[], sel:null, me:null, timers:[], brand:'VPSNAT', logo:''};
+const S = {role:null, name:null, tab:'vps', vps:[], sel:null, me:null, timers:[], brand:'VPSNAT', logo:'', pwa:null, offline:false};
 const ICONS = {
   out:'<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>',
   copy:'<rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
@@ -104,13 +154,17 @@ const ICONS = {
   trash:'<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m5 0V4a2 2 0 0 1 2-2h0a2 2 0 0 1 2 2v2"/>',
   plus:'<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>',
   server:'<rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/>',
-  x:'<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>'
+  x:'<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>',
+  download:'<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>',
+  inbox:'<polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/>'
 };
 const ic = n => `<svg class="ic" viewBox="0 0 24 24" aria-hidden="true">${ICONS[n] || ''}</svg>`;
 function mark() { return S.logo ? `<img src="${esc(S.logo)}" alt="">` : ic('server'); }
 function setNav(right, tag) {
-  $('#nav').innerHTML = `<div class="nav"><div class="in"><div class="logo"><span class="mk">${mark()}</span><span>${esc(S.brand)}${tag ? ` <small>${esc(tag)}</small>` : ''}</span></div><div class="row">${right || ''}</div></div></div>`;
+  $('#nav').innerHTML = `<div class="nav"><div class="in"><div class="logo"><span class="mk">${mark()}</span><span>${esc(S.brand)}${tag ? ` <small>${esc(tag)}</small>` : ''}</span></div><div class="row">${installBtn()}${right || ''}</div></div></div>`;
+  syncInstall();
 }
+const installBtn = () => `<button class="sec sm" data-a="install" data-install hidden>${ic('download')} Pasang aplikasi</button>`;
 const $ = (s, el=document) => el.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const val = id => { const e = document.getElementById(id); return e ? e.value.trim() : ''; };
@@ -126,15 +180,19 @@ const opts = (list, sel) => list.map(x => `<option value="${esc(x)}"${x===sel?' 
 function toast(msg, bad) {
   const t = document.createElement('div');
   t.className = 'toast' + (bad ? ' e' : '');
+  t.setAttribute('role', bad ? 'alert' : 'status');
   t.textContent = msg;
   document.body.appendChild(t);
   setTimeout(() => t.remove(), bad ? 6000 : 3200);
 }
 
 async function api(method, path, body) {
-  const r = await fetch(path, {method, credentials:'same-origin',
-    headers:{'Content-Type':'application/json','X-Requested-With':'vpsnat'},
-    body: body === undefined ? undefined : JSON.stringify(body)});
+  let r;
+  try {
+    r = await fetch(path, {method, credentials:'same-origin',
+      headers:{'Content-Type':'application/json','X-Requested-With':'vpsnat'},
+      body: body === undefined ? undefined : JSON.stringify(body)});
+  } catch (e) { const er = new Error('Tidak ada koneksi ke server.'); er.net = true; throw er; }
   let d = {};
   try { d = await r.json(); } catch (e) {}
   if (r.status === 401 && !path.startsWith('/api/login') && S.role) { S.role = null; render(); d.error = 'Sesi berakhir, silakan login lagi.'; toast(d.error, true); }
@@ -173,7 +231,7 @@ function track(id, base, done) {
       if (job.status === 'running') return setTimeout(tick, 3000);
       toast(job.kind + ' ' + job.name + (job.status === 'done' ? ' selesai' : ' gagal'), job.status !== 'done');
       if (done) done(job);
-    } catch (e) { toast(e.message, true); }
+    } catch (e) { if (e.net) return setTimeout(tick, 5000); toast(e.message, true); }
   };
   setTimeout(tick, 1500);
 }
@@ -233,9 +291,10 @@ function renderLogin() {
          <label>Password</label><input id="l2" type="password" autocomplete="current-password">`}
     <div style="margin-top:16px"><button data-a="login" style="width:100%">Masuk</button></div>
     <div id="lerr" class="err" style="margin-top:10px"></div>
-  </div><div class="foot">Gunakan nama VPS atau port SSH + password root VPS</div></div>`;
+  </div><div class="foot">Gunakan nama VPS atau port SSH + password root VPS<div class="pwa-hint">${installBtn()}<span data-ioshint hidden>Di iPhone/iPad: ketuk Bagikan lalu <b>Tambahkan ke Layar Utama</b> untuk memasang aplikasi.</span></div></div></div>`;
   const go = e => { if (e.key === 'Enter') $('[data-a=login]').click(); };
   $('#l1').addEventListener('keydown', go); $('#l2').addEventListener('keydown', go);
+  syncInstall();
 }
 
 async function doLogin(btn) {
@@ -264,7 +323,7 @@ async function renderUser() {
     <div class="top"><h1>${esc(v.name)} ${stateBadge(v)}</h1></div>
     <div class="grid">
       <div class="card"><h2>Informasi</h2>${infoKv(v, false)}</div>
-      <div class="card"><h2>Resource</h2><div id="res" class="mut">Memuat…</div></div>
+      <div class="card"><h2>Resource</h2><div id="res" class="mut"><span class="spin"></span>Memuat…</div></div>
     </div>
     <div class="card"><h2>Port</h2>${portsTable(v)}</div>
     <div class="grid">
@@ -281,7 +340,8 @@ async function renderUser() {
         <div style="margin-top:10px"><button class="bad" data-a="mereinstall">Reinstall</button></div>
       </div>
     </div>
-    <pre id="joblog" style="display:none"></pre>`;
+    <pre id="joblog" style="display:none"></pre>
+    <div class="foot">${esc(S.brand)} · VPSNAT Manager</div>`;
   const poll = async () => {
     try { $('#res').innerHTML = resHtml((await api('GET', '/api/me/resources')).res); } catch (e) {}
   };
@@ -294,7 +354,8 @@ function renderAdmin() {
   setNav(`<button class="sec sm" data-a="logout">${ic('out')} Keluar</button>`, 'Admin');
   $('#app').innerHTML = `
     <div class="tabs">${tabs.map(([k, n]) => `<button class="${S.tab===k?'on':''}" data-a="tab" data-k="${k}">${n}</button>`).join('')}</div>
-    <div id="tab"></div><pre id="joblog" style="display:none"></pre>`;
+    <div id="tab"><div class="skel"></div></div><pre id="joblog" style="display:none"></pre>
+    <div class="foot">${esc(S.brand)} · VPSNAT Manager</div>`;
   ({vps: tabVps, create: tabCreate, host: tabHost, api: tabApi})[S.tab]();
 }
 
@@ -311,7 +372,7 @@ function vstats(l) {
 function vcard(v) {
   const bw = v.bw, p = bw.quota > 0 ? Math.min(100, bw.used / bw.quota * 100) : null;
   const d = daysLeft(v.expires), ecls = v.expires && d <= 7 ? 'warnt' : '';
-  return `<div class="vc" data-a="open" data-n="${esc(v.name)}">
+  return `<div class="vc" data-a="open" data-n="${esc(v.name)}" tabindex="0" role="button" aria-label="Buka ${esc(v.name)}">
     <div class="vh"><b>${esc(v.name)}</b>${stateBadge(v)}</div>
     <div class="vs">${esc(v.plan)} · ${esc(v.backend)}${v.owner && v.owner !== '-' ? ' · ' + esc(v.owner) : ''}</div>
     <div class="chips"><span class="chip">${v.cpu} CPU</span><span class="chip">${fmb(v.ram)}</span><span class="chip">${v.disk} GB</span><span class="chip">${v.ports.length} port</span></div>
@@ -324,7 +385,7 @@ function renderVlist() {
   const l = (S.vps || []).filter(v => (!q || v.name.toLowerCase().includes(q) || String(v.owner).toLowerCase().includes(q) || String(v.ssh).includes(q))
     && (f === 'all' || (f === 'RUNNING' && v.state === 'RUNNING' && !v.suspended) || (f === 'STOPPED' && v.state !== 'RUNNING' && !v.suspended)
       || (f === 'SUSPEND' && v.suspended) || (f === 'EXP' && v.expires && daysLeft(v.expires) <= 7)));
-  el.innerHTML = l.length ? l.map(vcard).join('') : `<div class="empty" style="grid-column:1/-1">${(S.vps || []).length ? 'Tidak ada VPS yang cocok dengan filter.' : 'Belum ada VPS. Buat lewat tab "Buat VPS".'}</div>`;
+  el.innerHTML = l.length ? l.map(vcard).join('') : `<div class="empty" style="grid-column:1/-1">${ic('inbox')}${(S.vps || []).length ? 'Tidak ada VPS yang cocok dengan filter.' : 'Belum ada VPS. Buat lewat tab "Buat VPS".'}</div>`;
 }
 
 async function tabVps() {
@@ -358,7 +419,7 @@ function tabCreate() {
 }
 
 async function tabHost() {
-  $('#tab').innerHTML = '<div class="card mut">Memuat…</div>';
+  $('#tab').innerHTML = '<div class="card mut"><span class="spin"></span>Memuat…</div>';
   try {
     const [h, s] = await Promise.all([api('GET', '/api/admin/host'), api('GET', '/api/admin/settings')]);
     const x = h.host;
@@ -376,17 +437,131 @@ async function tabHost() {
   } catch (e) { toast(e.message, true); }
 }
 
+// [method, path, deskripsi, [[field, tipe, wajib, keterangan]], contoh body, contoh respons, catatan]
+const VPS_JSON = '{"ok":true,"vps":{"name":"demo","state":"RUNNING","suspended":false,"reason":"-","plan":"shared","backend":"container","cpu":2,"ram":2048,"disk":20,"created":"2026-10-01","expires":1790000000,"host":"203.0.113.10","ssh":20000,"ports":[{"public":20000,"internal":22,"proto":"tcp","ssh":true}],"bw":{"used":0,"rx":0,"tx":0,"quota":0,"rate":0,"exhausted":false},"ip":"10.10.10.2","owner":"-","password":"…"}}';
+const RES_JSON = '{"ok":true,"res":{"state":"RUNNING","cpu":{"pct":3.1,"cores":2},"ram":{"used":310000000,"limit":2048000000,"pct":15.1},"disk":{"used":2000000000,"limit":20000000000,"pct":10},"net":{"rx":1024,"tx":2048},"procs":42,"bw":{"used":0,"quota":0,"rate":0,"exhausted":false}}}';
+const JOB_JSON = '{"ok":true,"job":{"id":"a1b2c3d4e5f6","kind":"create","name":"demo","status":"running","rc":null,"output":"","started":1790000000,"finished":null}}';
+const OUT_JSON = '{"ok":true,"output":"[+] ok"}';
+const JOB202 = '202 {"ok":true,"job":"a1b2c3d4e5f6"}';
+const IMG_NOTE = 'Pilihan: ubuntu24, ubuntu22, ubuntu20, debian12, debian11, alma9, rocky9, alpine.';
+const API_DOC = [
+  ['Autentikasi & sesi', [
+    ['GET', '/api/session', 'Info branding dan peran sesi saat ini. Aman dipanggil tanpa login.', [], null,
+      '{"ok":true,"brand":"Bimxyz Official","logo":"","role":"admin","name":null}', 'role: "admin", "user", atau null (belum login). name hanya terisi untuk user.'],
+    ['POST', '/api/login/admin', 'Login admin untuk UI; menghasilkan cookie sesi HttpOnly. Untuk skrip, pakai API key, bukan endpoint ini.',
+      [['username', 'string', 'ya', 'Username dari web-setup'], ['password', 'string', 'ya', 'Password admin']],
+      '{"username":"admin","password":"PasswordKuat123"}', '{"ok":true,"role":"admin"}', '401 salah, 429 terlalu banyak gagal, 503 admin belum dikonfigurasi.'],
+    ['POST', '/api/login/user', 'Login pemilik VPS dengan password root VPS.',
+      [['identifier', 'string', 'ya', 'Nama VPS atau port SSH'], ['password', 'string', 'ya', 'Password root VPS']],
+      '{"identifier":"demo","password":"PasswordRoot123"}', '{"ok":true,"role":"user","name":"demo"}', '401 salah, 429 terlalu banyak gagal. VPS hasil sync (password "unknown") tidak bisa login.'],
+    ['POST', '/api/logout', 'Cabut sesi dan hapus cookie.', [], '{}', '{"ok":true}', null],
+  ]],
+  ['User (cookie sesi user)', [
+    ['GET', '/api/me', 'Detail VPS milik sendiri, termasuk password root.', [], null, VPS_JSON, 'expires: epoch detik (0 = tanpa expired). bw.used/quota dalam byte, bw.rate dalam Mbps.'],
+    ['GET', '/api/me/resources', 'Resource live: CPU, RAM, disk, network, bandwidth.', [], null, RES_JSON, 'cpu.pct bernilai null pada sampel pertama (butuh dua pengukuran).'],
+    ['POST', '/api/me/action', 'Start, stop, atau restart VPS sendiri.', [['action', 'string', 'ya', 'start | stop | restart']], '{"action":"restart"}', OUT_JSON, '400 jika CLI menolak (mis. VPS disuspend), 409 jika VPS sedang diproses job.'],
+    ['POST', '/api/me/passwd', 'Ganti password root VPS sendiri.', [['password', 'string', 'tidak', '8-64 karakter: huruf, angka, @ % ^ * _ + = . , : ; ! ? ~ -. Kosong = acak.']],
+      '{"password":"PasswordBaru2026"}', '{"ok":true,"output":"…","password":"PasswordBaru2026"}', 'Sesi lain untuk VPS yang sama dicabut.'],
+    ['POST', '/api/me/reinstall', 'Install ulang OS. Semua data guest hilang; port, resource, dan expired tetap.',
+      [['image', 'string', 'tidak', 'Default ubuntu22. ' + IMG_NOTE], ['confirm', 'string', 'ya', 'Harus sama persis dengan nama VPS']],
+      '{"image":"debian12","confirm":"demo"}', JOB202, '403 jika VPS disuspend atau kuota bandwidth habis, 422 jika confirm salah.'],
+    ['GET', '/api/me/jobs/{id}', 'Status job reinstall milik sendiri.', [], null, JOB_JSON, 'status: running, done, error, atau interrupted. Polling sampai bukan running.'],
+  ]],
+  ['Admin: host & VPS', [
+    ['GET', '/api/admin/host', 'Info host: IP publik, CPU, RAM, disk, uptime, domain panel, dan hitungan VPS.', [], null,
+      '{"ok":true,"host":{"public_ip":"203.0.113.10","cores":4,"load":[0.1,0.2,0.2],"ram":{"total":0,"avail":0},"disk":{"total":0,"used":0},"uptime":12345,"web":{"domain":"","port":8787,"bind":"0.0.0.0"},"vps":{"total":3,"running":2,"suspended":1}}}', null],
+    ['GET', '/api/admin/vps', 'Daftar semua VPS (tanpa password) beserta batas jumlah port.', [], null, '{"ok":true,"vps":[{…}],"limits":{"ports_min":2,"ports_max":50}}', 'Setiap item sama seperti detail VPS, tanpa field password.'],
+    ['POST', '/api/admin/vps', 'Buat VPS baru. Berjalan sebagai job.', [
+      ['name', 'string', 'ya', 'a-z, 0-9, -; awal huruf/angka; maks 31 karakter'], ['image', 'string', 'tidak', 'Default ubuntu22. ' + IMG_NOTE],
+      ['cpu', 'integer', 'tidak', '1-128, default 1'], ['ram', 'integer', 'tidak', 'MB, 128-1048576, default 1024'], ['disk', 'integer', 'tidak', 'GB, 1-10000, default 10'],
+      ['ports', 'integer', 'tidak', 'Total port 2-50 (termasuk 1 SSH), default 3'], ['plan', 'string', 'tidak', 'shared (default) | dedicated'],
+      ['backend', 'string', 'tidak', 'container (default) | vm'], ['expire', 'string', 'tidak', '30d, 2w, 1m, 12h, YYYY-MM-DD, never, atau 0 (tanpa). Maks 10 tahun'],
+      ['owner', 'string', 'tidak', 'Label pemilik, maks 60 karakter, tanpa "|"'], ['nesting', 'boolean', 'tidak', 'Default true; hanya berlaku untuk container'],
+      ['password', 'string', 'tidak', '8-64 karakter; kosong = acak'], ['bw_quota_gb', 'number', 'tidak', 'Kuota bandwidth GB (0-1000000); kosong = default setting'],
+      ['bw_rate_mbit', 'number', 'tidak', 'Limit kecepatan Mbps (0-100000); kosong = default setting']],
+      '{"name":"demo","cpu":2,"ram":2048,"disk":20,"image":"ubuntu22","plan":"shared","ports":5,"expire":"30d"}', JOB202, '409 jika nama sudah ada, 422 jika input tidak valid. Password acak disamarkan di output job; ambil lewat GET /api/admin/vps/{name}.'],
+    ['GET', '/api/admin/vps/{name}', 'Detail satu VPS, termasuk password root.', [], null, VPS_JSON, '404 jika VPS tidak ada.'],
+    ['DELETE', '/api/admin/vps/{name}', 'Hapus VPS permanen. Berjalan sebagai job.', [], null, JOB202, 'Tidak ada konfirmasi di API; pastikan nama sudah benar.'],
+    ['GET', '/api/admin/vps/{name}/resources', 'Resource live satu VPS.', [], null, RES_JSON, null],
+    ['POST', '/api/admin/vps/{name}/action', 'Kontrol power dan suspend.', [['action', 'string', 'ya', 'start | stop | restart | suspend | unsuspend']], '{"action":"restart"}', OUT_JSON, '409 jika VPS sedang diproses job.'],
+    ['POST', '/api/admin/vps/{name}/reinstall', 'Install ulang OS. Berjalan sebagai job.', [['image', 'string', 'tidak', 'Default ubuntu22. ' + IMG_NOTE]], '{"image":"debian12"}', JOB202, null],
+    ['POST', '/api/admin/vps/{name}/passwd', 'Ganti password root.', [['password', 'string', 'tidak', '8-64 karakter; kosong = acak']], '{"password":"PasswordBaru2026"}', '{"ok":true,"output":"…","password":"PasswordBaru2026"}', null],
+    ['POST', '/api/admin/vps/{name}/resize', 'Ubah CPU, RAM, dan disk. Field yang tidak dikirim tetap memakai nilai sekarang.',
+      [['cpu', 'integer', 'tidak', '1-128'], ['ram', 'integer', 'tidak', 'MB, 128-1048576'], ['disk', 'integer', 'tidak', 'GB; tidak boleh lebih kecil dari disk sekarang, maks 10000']],
+      '{"cpu":4,"ram":4096,"disk":40}', OUT_JSON, null],
+    ['POST', '/api/admin/vps/{name}/renew', 'Perpanjang masa aktif dari sekarang; juga mereset counter bandwidth.', [['duration', 'string', 'ya', 'Durasi relatif positif: 30d, 2w, 1m, 12h']], '{"duration":"30d"}', OUT_JSON, 'Hanya suspension beralasan expired yang dibuka otomatis.'],
+    ['POST', '/api/admin/vps/{name}/expire', 'Set tanggal/durasi expired atau hapus expired.', [['value', 'string', 'ya', '30d, 2w, 1m, 12h, YYYY-MM-DD, never, atau 0']], '{"value":"2026-12-31"}', OUT_JSON, null],
+    ['POST', '/api/admin/vps/{name}/owner', 'Ubah label owner.', [['owner', 'string', 'ya', 'Maks 60 karakter, tanpa "|"; kosong = "-"']], '{"owner":"budi"}', OUT_JSON, null],
+    ['POST', '/api/admin/vps/{name}/plan', 'Ubah tipe layanan.', [['plan', 'string', 'ya', 'shared | dedicated']], '{"plan":"dedicated"}', OUT_JSON, null],
+    ['POST', '/api/admin/vps/{name}/bandwidth', 'Atur kuota/limit kecepatan atau reset counter.',
+      [['action', 'string', 'ya', 'set | limit | reset'], ['quota_gb', 'number', 'untuk set', 'GB, 0 = tanpa kuota'], ['rate_mbit', 'number', 'untuk set/limit', 'Mbps, 0 = tanpa limit']],
+      '{"action":"set","quota_gb":500,"rate_mbit":100}', OUT_JSON, 'limit hanya mengubah kecepatan; reset mengosongkan pemakaian.'],
+    ['POST', '/api/admin/vps/{name}/ports', 'Tambah port berurutan (mapping publik ke port internal yang sama).', [['proto', 'string', 'tidak', 'tcp (default) | udp | both'], ['count', 'integer', 'tidak', 'Jumlah port 1-500, default 1']], '{"proto":"tcp","count":5}', OUT_JSON, null],
+    ['DELETE', '/api/admin/vps/{name}/ports/{port}', 'Hapus satu port aplikasi berdasarkan nomor port publik.', [], null, OUT_JSON, 'Port SSH tidak dapat dihapus. 422 jika nomor port tidak valid.'],
+  ]],
+  ['Admin: sistem', [
+    ['GET', '/api/admin/settings', 'Lihat setting aktif dan daftar key yang boleh diubah.', [], null, '{"ok":true,"settings":{"GRACE_DAYS":"3"},"keys":["grace","shared-suspend-minutes","…"]}', null],
+    ['POST', '/api/admin/settings', 'Ubah satu setting.', [['key', 'string', 'ya', 'grace | shared-suspend-minutes | shared-threshold | monitor-interval | bandwidth-default-quota | bandwidth-default-rate'], ['value', 'number', 'ya', '0-1000000']], '{"key":"grace","value":3}', OUT_JSON, null],
+    ['POST', '/api/admin/sync', 'Sinkronkan database dengan LXD. Guest tanpa record diimpor dalam keadaan suspend (sync-pending).', [], '{}', OUT_JSON, null],
+    ['GET', '/api/admin/nodes', 'Dashboard multi-node (teks).', [], null, OUT_JSON, 'output berisi tabel teks yang sama dengan perintah vpsnat nodes.'],
+    ['GET', '/api/admin/jobs', 'Daftar maksimal 30 job terbaru.', [], null, '{"ok":true,"jobs":[{"id":"a1b2c3d4e5f6","kind":"create","name":"demo","status":"done","rc":0,"output":"…","started":1790000000,"finished":1790000042}]}', null],
+    ['GET', '/api/admin/jobs/{id}', 'Status satu job. Polling sampai status bukan running.', [], null, JOB_JSON, 'kind: create, delete, reinstall. status: running, done, error, interrupted (job terputus karena service restart).'],
+  ]],
+];
+
+function curlOf(e) {
+  const [m, p, , , ex] = e, o = location.origin;
+  const url = o + p.replace('{name}', 'NAMA').replace('{id}', 'JOB_ID').replace('{port}', '20011');
+  const pub = /^\/api\/(login|logout|session)/.test(p), usr = p.startsWith('/api/me');
+  const auth = pub ? "-c cookie.txt -b cookie.txt -H 'X-Requested-With: vpsnat'" : usr ? "-b cookie.txt -H 'X-Requested-With: vpsnat'" : '-H "Authorization: Bearer $KEY"';
+  const body = ex ? ` -H 'Content-Type: application/json' -d '${ex}'` : '';
+  return `curl${m === 'GET' ? '' : ' -X ' + m} ${auth}${body} ${url}`;
+}
+
+function epHtml(e) {
+  const [m, p, d, f, , res, note] = e, curl = curlOf(e);
+  return `<details class="ep" data-s="${esc((m + ' ' + p + ' ' + d).toLowerCase())}"><summary><span class="mth m-${m}">${m}</span><span class="pth">${esc(p)}</span><span class="sd">${esc(d.split('. ')[0].replace(/\.$/, ''))}</span></summary><div class="bd">
+    <p>${esc(d)}</p>
+    ${f.length ? `<div class="tw"><table><tr><th>Field</th><th>Tipe</th><th>Wajib</th><th>Keterangan</th></tr>${f.map(r => `<tr><td><code>${esc(r[0])}</code></td><td>${esc(r[1])}</td><td>${esc(r[2])}</td><td class="wrap">${esc(r[3])}</td></tr>`).join('')}</table></div>` : ''}
+    <button class="sm sec cp" data-a="copy" data-t="${esc(curl)}">${ic('copy')} Salin curl</button><pre>${esc(curl)}</pre>
+    <h3 style="margin-top:12px">Respons</h3><pre>${esc(res)}</pre>
+    ${note ? `<p class="mut" style="margin:8px 0 0">${esc(note)}</p>` : ''}</div></details>`;
+}
+
+function filterApi(q) {
+  q = q.trim().toLowerCase();
+  document.querySelectorAll('.grp').forEach(g => {
+    let n = 0;
+    g.querySelectorAll('.ep').forEach(e => { const on = !q || e.dataset.s.includes(q); e.hidden = !on; if (on) n++; });
+    g.hidden = !n;
+  });
+}
+
 function tabApi() {
   const o = location.origin;
-  $('#tab').innerHTML = `<div class="card"><h2>API (khusus admin)</h2>
-    <p class="mut">Header: <code>Authorization: Bearer &lt;WEB_API_KEY&gt;</code>. Key diatur lewat <code>vpsnat web key</code> di server. Semua body JSON.</p>
-    <pre>curl -H "Authorization: Bearer $KEY" ${esc(o)}/api/admin/vps
-curl -H "Authorization: Bearer $KEY" ${esc(o)}/api/admin/vps/NAMA/resources
-curl -X POST -H "Authorization: Bearer $KEY" -d '{"action":"restart"}' ${esc(o)}/api/admin/vps/NAMA/action
-curl -X POST -H "Authorization: Bearer $KEY" -d '{"name":"demo","cpu":2,"ram":2048,"disk":20,"image":"ubuntu22","plan":"shared","expire":"30d"}' ${esc(o)}/api/admin/vps</pre>
-    <div class="tw"><table style="min-width:520px"><tr><th>Method</th><th>Path</th><th>Keterangan</th></tr>
-    ${[['GET','/api/admin/host','info host + hitungan VPS'],['GET','/api/admin/vps','daftar VPS'],['POST','/api/admin/vps','buat VPS (job)'],['GET','/api/admin/vps/{n}','detail + password'],['DELETE','/api/admin/vps/{n}','hapus (job)'],['GET','/api/admin/vps/{n}/resources','CPU/RAM/disk/network'],['POST','/api/admin/vps/{n}/action','start|stop|restart|suspend|unsuspend'],['POST','/api/admin/vps/{n}/reinstall','{image} (job)'],['POST','/api/admin/vps/{n}/passwd','{password?}'],['POST','/api/admin/vps/{n}/resize','{cpu,ram,disk}'],['POST','/api/admin/vps/{n}/renew','{duration}'],['POST','/api/admin/vps/{n}/expire','{value}'],['POST','/api/admin/vps/{n}/owner','{owner}'],['POST','/api/admin/vps/{n}/plan','{plan}'],['POST','/api/admin/vps/{n}/bandwidth','{action:set|limit|reset,quota_gb,rate_mbit}'],['POST','/api/admin/vps/{n}/ports','{proto,count}'],['DELETE','/api/admin/vps/{n}/ports/{port}','hapus port'],['GET','/api/admin/settings','lihat setting'],['POST','/api/admin/settings','{key,value}'],['POST','/api/admin/sync','sync DB dengan LXD'],['GET','/api/admin/nodes','dashboard multi-node'],['GET','/api/admin/jobs[/{id}]','status job']].map(r => `<tr><td>${r[0]}</td><td><code>${esc(r[1])}</code></td><td>${esc(r[2])}</td></tr>`).join('')}</table></div>
-    <p class="mut">Operasi panjang (create, delete, reinstall) mengembalikan <code>{"job":"id"}</code>; polling <code>/api/admin/jobs/{id}</code>.</p></div>`;
+  const facts = [
+    ['Base URL', o],
+    ['Admin (skrip/API)', 'Header Authorization: Bearer <WEB_API_KEY>. Key dibuat/diganti dengan perintah sudo vpsnat web key (tampil sekali). Tanpa cookie dan tanpa header X-Requested-With.'],
+    ['UI (cookie)', 'Login lewat /api/login/*. Sesi berupa cookie HttpOnly + SameSite=Strict; setiap POST/DELETE wajib header X-Requested-With: vpsnat.'],
+    ['Format', 'Body dan respons JSON UTF-8. Body maks 64 KB, harus objek JSON, dan memakai Content-Length (chunked tidak didukung).'],
+    ['Bentuk respons', 'Sukses: {"ok":true,...}. Gagal: {"ok":false,"error":"pesan"} dengan status HTTP yang sesuai.'],
+    ['Job (operasi panjang)', 'Create, delete, dan reinstall membalas 202 {"ok":true,"job":"<id>"}. Polling endpoint job tiap 2-3 detik sampai status bukan running (done, error, atau interrupted).'],
+    ['Rate limit login', '5 login gagal per IP per 15 menit (per VPS: 20) membalas 429. API key salah juga dihitung.']
+  ];
+  const codes = [['200', 'Berhasil'], ['202', 'Job dimulai'], ['400', 'Perintah CLI gagal (pesan di error)'], ['401', 'Belum login atau API key salah'], ['403', 'Peran tidak sesuai, header X-Requested-With hilang, atau VPS disuspend (reinstall user)'],
+    ['404', 'Endpoint, VPS, atau job tidak ditemukan'], ['409', 'VPS sudah ada atau sedang diproses job lain'], ['413', 'Body lebih dari 64 KB'], ['422', 'Validasi input gagal'], ['429', 'Terlalu banyak percobaan login gagal'], ['500', 'Kesalahan internal'], ['503', 'Admin belum dikonfigurasi, server sibuk, atau job tidak bisa dijalankan']];
+  $('#tab').innerHTML = `<div class="card doc"><h2>Dokumentasi API</h2>
+    <p class="lead">Semua endpoint berada di bawah <code>/api/</code>. Contoh curl memakai <code>$KEY</code> untuk API key admin dan <code>NAMA</code> untuk nama VPS.</p>
+    <h3>Dasar</h3><div class="facts">${facts.map(f => `<b>${esc(f[0])}</b><span>${esc(f[1])}</span>`).join('')}</div>
+    <h3>Kode status</h3><div class="tw"><table style="min-width:420px"><tr><th>Kode</th><th>Arti</th></tr>${codes.map(c => `<tr><td><code>${c[0]}</code></td><td class="wrap">${esc(c[1])}</td></tr>`).join('')}</table></div>
+    <h3>Mulai cepat</h3>
+    <pre>export KEY=&lt;WEB_API_KEY&gt;
+curl -H "Authorization: Bearer $KEY" ${esc(o)}/api/admin/host
+curl -H "Authorization: Bearer $KEY" ${esc(o)}/api/admin/vps
+curl -X POST -H "Authorization: Bearer $KEY" -d '{"name":"demo","cpu":2,"ram":2048,"disk":20,"ports":5,"expire":"30d"}' ${esc(o)}/api/admin/vps
+curl -H "Authorization: Bearer $KEY" ${esc(o)}/api/admin/jobs/JOB_ID</pre></div>
+    <div class="card"><input id="apiq" class="apisrch" type="search" placeholder="Cari endpoint… (mis. bandwidth, DELETE, reinstall)" autocomplete="off" aria-label="Cari endpoint">
+    ${API_DOC.map(g => `<div class="grp"><h3>${esc(g[0])}</h3>${g[1].map(epHtml).join('')}</div>`).join('')}</div>`;
 }
 
 async function openVps(name, refresh) {
@@ -398,9 +573,10 @@ async function openVps(name, refresh) {
   S.sel = name;
   const el = document.createElement('div');
   el.className = 'sheet'; el.id = 'sheet'; el.dataset.n = name;
+  el.setAttribute('role', 'dialog'); el.setAttribute('aria-modal', 'true'); el.setAttribute('aria-label', 'Detail VPS ' + name); el.tabIndex = -1;
   el.innerHTML = `<div class="in">
     <div class="top"><h1>${esc(v.name)} ${stateBadge(v)}</h1><button class="sec sm" data-a="close">${ic('x')} Tutup</button></div>
-    <div class="grid"><div class="card"><h2>Info</h2>${infoKv(v, true)}</div><div class="card"><h2>Resource</h2><div id="res" class="mut">Memuat…</div></div></div>
+    <div class="grid"><div class="card"><h2>Info</h2>${infoKv(v, true)}</div><div class="card"><h2>Resource</h2><div id="res" class="mut"><span class="spin"></span>Memuat…</div></div></div>
     <div class="card"><h2>Kontrol</h2><div class="row">
       <button class="ok" data-a="power" data-p="start">${ic('play')} Start</button><button class="warn" data-a="power" data-p="restart">${ic('rotate')} Restart</button><button class="bad" data-a="power" data-p="stop">${ic('stop')} Stop</button>
       <button class="sec" data-a="power" data-p="suspend">${ic('pause')} Suspend</button><button class="sec" data-a="power" data-p="unsuspend">${ic('play')} Unsuspend</button></div></div>
@@ -419,6 +595,8 @@ async function openVps(name, refresh) {
       <div class="card danger"><h3>Hapus VPS</h3><label>Ketik <b>${esc(v.name)}</b> untuk konfirmasi</label><input id="d_conf" autocapitalize="none"><div style="margin-top:8px"><button class="bad" data-a="delete">${ic('trash')} Hapus permanen</button></div></div>
     </div></div>`;
   document.body.appendChild(el);
+  document.body.style.overflow = 'hidden';
+  if (!refresh) el.focus();
   el.scrollTop = top;
   const poll = async () => {
     if (S.sel !== name || !$('#res')) return;
@@ -427,12 +605,18 @@ async function openVps(name, refresh) {
   poll(); S.sheetTimer = setInterval(poll, 5000);
 }
 
-function closeSheet() { clearInterval(S.sheetTimer); S.sheetTimer = null; const e = $('#sheet'); if (e) e.remove(); S.sel = null; }
+function closeSheet() { clearInterval(S.sheetTimer); S.sheetTimer = null; const e = $('#sheet'); if (e) e.remove(); S.sel = null; document.body.style.overflow = ''; }
 
 async function refreshAdmin() { if (S.tab === 'vps') await tabVps(); if (S.sel) openVps(S.sel, true); }
 
+function renderOffline() {
+  $('#nav').innerHTML = '';
+  $('#app').innerHTML = `<div class="login"><div class="card empty">${ic('refresh')}<h2>Tidak dapat terhubung ke server</h2><p>Periksa koneksi internet, lalu coba lagi.</p><button data-a="retry">${ic('refresh')} Coba lagi</button></div></div>`;
+}
+
 function render() {
   clearTimers(); closeSheet(); document.title = S.brand + ' Panel';
+  if (S.offline) return renderOffline();
   if (S.role === 'user') return renderUser();
   if (S.role === 'admin') return renderAdmin();
   renderLogin();
@@ -443,6 +627,8 @@ const cur = () => { const e = $('#sheet'); const n = (e && e.dataset.n) || S.sel
 const vpath = (n, p) => '/api/admin/vps/' + encodeURIComponent(n) + (p || '');
 const post = (p, b) => api('POST', vpath(cur(), p), b);
 const A = {
+  install: async () => { const e = S.pwa; if (!e) return; S.pwa = null; syncInstall(); e.prompt(); try { await e.userChoice; } catch (_) {} },
+  retry: () => boot(),
   lm: b => { S.loginMode = b.dataset.m; renderLogin(); },
   login: b => doLogin(b),
   logout: () => logout(),
@@ -495,17 +681,50 @@ const A = {
 document.addEventListener('input', e => {
   if (e.target.id === 'vq') { S.q = e.target.value; renderVlist(); }
   else if (e.target.id === 'vf') { S.f = e.target.value; renderVlist(); }
+  else if (e.target.id === 'apiq') filterApi(e.target.value);
 });
 
 document.addEventListener('click', e => {
+  if (e.target.id === 'sheet') return A.close();
   const el = e.target.closest('[data-a]');
   if (el && A[el.dataset.a]) A[el.dataset.a](el);
 });
 
-(async () => {
-  try { const d = await api('GET', '/api/session'); S.role = d.role; S.name = d.name; S.brand = d.brand || S.brand; S.logo = d.logo || ''; } catch (e) {}
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && $('#sheet')) return A.close();
+  if ((e.key === 'Enter' || e.key === ' ') && e.target.classList && e.target.classList.contains('vc')) { e.preventDefault(); A.open(e.target); }
+});
+
+// ---------- PWA ----------
+const standalone = () => (window.matchMedia && matchMedia('(display-mode: standalone)').matches) || navigator.standalone === true;
+function syncInstall() {
+  document.querySelectorAll('[data-install]').forEach(b => { b.hidden = !S.pwa; });
+  const ios = /iphone|ipad|ipod/i.test(navigator.userAgent) && !standalone();
+  document.querySelectorAll('[data-ioshint]').forEach(b => { b.hidden = !ios; });
+}
+function netState() { const n = $('#net'); if (n) n.hidden = navigator.onLine; }
+window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); S.pwa = e; syncInstall(); });
+window.addEventListener('appinstalled', () => { S.pwa = null; syncInstall(); toast('Aplikasi terpasang'); });
+window.addEventListener('online', () => { netState(); toast('Kembali online'); });
+window.addEventListener('offline', netState);
+// Service worker butuh HTTPS (atau localhost). Lewat http://IP:port panel tetap jalan, hanya tanpa PWA.
+if ('serviceWorker' in navigator && window.isSecureContext) {
+  navigator.serviceWorker.register('/sw.js').then(reg => {
+    reg.addEventListener('updatefound', () => {
+      const w = reg.installing;
+      if (w) w.addEventListener('statechange', () => { if (w.state === 'installed' && navigator.serviceWorker.controller) toast('Versi panel baru tersedia. Muat ulang halaman untuk memakainya.'); });
+    });
+  }).catch(() => {});
+}
+
+async function boot() {
+  S.offline = false;
+  try { const d = await api('GET', '/api/session'); S.role = d.role; S.name = d.name; S.brand = d.brand || S.brand; S.logo = d.logo || ''; }
+  catch (e) { if (e.net) S.offline = true; }
   render();
-})();
+}
+netState();
+boot();
 </script>
 </body>
 </html>

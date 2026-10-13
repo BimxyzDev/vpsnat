@@ -2,7 +2,7 @@
 
 set -uo pipefail
 
-VERSION="3.2.5"
+VERSION="3.3.0"
 APP_NAME="vpsnat"
 BASE_DIR="${VPSNAT_BASE_DIR:-/etc/vpsnat}"
 DB_FILE="${BASE_DIR}/vps.db"

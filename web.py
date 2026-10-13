@@ -6,19 +6,23 @@ User  : login UI dengan nama VPS / port SSH + password root VPS.
 Config: /etc/vpsnat/vpsnat.conf (WEB_*). Logika provisioning tetap di CLI Bash.
 """
 import datetime
+import functools
 import hashlib
 import hmac
 import ipaddress
 import json
+import math
 import os
 import re
 import secrets
 import shutil
 import signal
+import struct
 import subprocess
 import sys
 import threading
 import time
+import zlib
 from contextlib import contextmanager
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -1206,6 +1210,108 @@ def a_job(req, jid):
         return {"ok": True, "job": job_view(j)}
 
 
+# ---------- PWA (manifest, service worker, ikon) ----------
+PWA_REV = "1"  # naikkan jika isi service worker/ikon berubah tanpa perubahan web.html
+PWA_THEME = "#2563eb"
+PWA_ICONS = {"/icon-192.png": 192, "/icon-512.png": 512, "/apple-touch-icon.png": 180}
+PWA_PATHS = frozenset({"/manifest.webmanifest", "/sw.js", *PWA_ICONS})
+
+# Service worker sengaja TIDAK menyentuh /api/*: sesi, password VPS, dan data resource tidak pernah
+# masuk cache. Yang di-cache hanya shell HTML (tanpa data), manifest, dan ikon. HTML shell dicache
+# bersama header CSP-nya, sehingga nonce di dalamnya tetap cocok saat dimuat offline.
+PWA_SW = r"""'use strict';
+const CACHE = 'vpsnat-%V%';
+const ASSETS = ['/manifest.webmanifest', '/icon-192.png', '/icon-512.png', '/apple-touch-icon.png'];
+const OFFLINE = '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Offline</title><body style="margin:0;min-height:100vh;display:grid;place-items:center;font-family:system-ui,sans-serif;background:#f8fafc;color:#0f172a;text-align:center"><div style="padding:24px"><h1 style="font-size:20px">Tidak ada koneksi</h1><p style="color:#64748b">Panel butuh koneksi ke server. Coba lagi setelah online.</p><button onclick="location.reload()" style="padding:10px 18px;border:0;border-radius:10px;background:#2563eb;color:#fff;font:inherit;font-weight:600">Muat ulang</button></div>';
+self.addEventListener('install', e => e.waitUntil(
+  caches.open(CACHE).then(c => c.addAll(['/'].concat(ASSETS))).then(() => self.skipWaiting())));
+self.addEventListener('activate', e => e.waitUntil(
+  caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k)))).then(() => self.clients.claim())));
+self.addEventListener('fetch', e => {
+  const r = e.request, u = new URL(r.url);
+  if (r.method !== 'GET' || u.origin !== self.location.origin || u.pathname.startsWith('/api/')) return;
+  if (r.mode === 'navigate') {
+    e.respondWith(fetch(r).then(res => {
+      if (res.ok && u.pathname === '/') { const cp = res.clone(); e.waitUntil(caches.open(CACHE).then(c => c.put('/', cp))); }
+      return res;
+    }).catch(() => caches.match('/').then(m => m || new Response(OFFLINE, {status: 503, headers: {'Content-Type': 'text/html; charset=utf-8'}}))));
+    return;
+  }
+  if (ASSETS.includes(u.pathname)) e.respondWith(caches.match(r).then(m => m || fetch(r)));
+});
+"""
+
+
+def pwa_version():
+    h = hashlib.sha256(load_ui().encode())
+    h.update((PWA_REV + branding()["brand"]).encode())
+    return h.hexdigest()[:10]
+
+
+def pwa_manifest():
+    brand = branding()["brand"]
+    icon = lambda n: {"src": f"/icon-{n}.png", "sizes": f"{n}x{n}", "type": "image/png", "purpose": "any maskable"}
+    return {
+        "id": "/",
+        "name": f"{brand} Panel",
+        "short_name": brand[:12],
+        "description": "Panel manajemen VPS: kontrol, resource live, dan administrasi.",
+        "start_url": "/",
+        "scope": "/",
+        "display": "standalone",
+        "background_color": "#f8fafc",
+        "theme_color": PWA_THEME,
+        "lang": "id",
+        "categories": ["utilities", "productivity"],
+        "icons": [icon(192), icon(512)],
+    }
+
+
+def _png_chunk(tag, data):
+    body = tag + data
+    return struct.pack(">I", len(data)) + body + struct.pack(">I", zlib.crc32(body) & 0xFFFFFFFF)
+
+
+def _sd_rrect(px, py, cx, cy, hw, hh, r):
+    qx, qy = abs(px - cx) - hw + r, abs(py - cy) - hh + r
+    return math.hypot(max(qx, 0.0), max(qy, 0.0)) + min(max(qx, qy), 0.0) - r
+
+
+@functools.lru_cache(maxsize=8)
+def pwa_icon(size):
+    """Ikon PNG (stdlib murni): dua bar server putih di atas latar biru. Full-bleed + area aman maskable."""
+    bg, fg = (37, 99, 235), (255, 255, 255)
+    cx, hw, hh, rad = size / 2, size * 0.26, size * 0.085, size * 0.05
+    bars = (size * 0.385, size * 0.615)
+    dot_x, dot_r = cx - hw + size * 0.085, max(size * 0.024, 1.2)
+    base = bytes(bg) * size
+    rows = bytearray()
+    for y in range(size):
+        py = y + 0.5
+        cy = next((c for c in bars if abs(py - c) <= hh + 2), None)
+        if cy is None:
+            rows += b"\x00" + base
+            continue
+        line = bytearray(base)
+        for x in range(int(cx - hw) - 2, int(cx + hw) + 3):
+            px = x + 0.5
+            a = min(max(0.5 - _sd_rrect(px, py, cx, cy, hw, hh, rad), 0.0), 1.0)
+            if a <= 0:
+                continue
+            col = [bg[i] + (fg[i] - bg[i]) * a for i in range(3)]
+            b = min(max(0.5 - (math.hypot(px - dot_x, py - cy) - dot_r), 0.0), 1.0)
+            if b > 0:
+                col = [col[i] + (bg[i] - col[i]) * b for i in range(3)]
+            line[x * 3:x * 3 + 3] = bytes(int(round(v)) for v in col)
+        rows += b"\x00" + bytes(line)
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + _png_chunk(b"IHDR", struct.pack(">IIBBBBB", size, size, 8, 2, 0, 0, 0))
+        + _png_chunk(b"IDAT", zlib.compress(bytes(rows), 9))
+        + _png_chunk(b"IEND", b"")
+    )
+
+
 # ---------- HTTP server ----------
 def load_ui():
     try:
@@ -1319,6 +1425,7 @@ class Handler(BaseHTTPRequestHandler):
         csp = (
             "default-src 'none'; connect-src 'self'; img-src 'self' data: https:; "
             "style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; "
+            "manifest-src 'self'; worker-src 'self'; "
             "base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
         )
         if nonce:
@@ -1345,6 +1452,14 @@ class Handler(BaseHTTPRequestHandler):
 
     def send_json(self, status, obj, extra=None):
         self.send_bytes(status, "application/json; charset=utf-8", json.dumps(obj).encode(), extra)
+
+    def send_pwa(self, path):
+        if path == "/manifest.webmanifest":
+            return self.send_bytes(200, "application/manifest+json; charset=utf-8", json.dumps(pwa_manifest()).encode())
+        if path == "/sw.js":
+            js = PWA_SW.replace("%V%", pwa_version()).encode()
+            return self.send_bytes(200, "text/javascript; charset=utf-8", js, extra=[("Service-Worker-Allowed", "/")])
+        return self.send_bytes(200, "image/png", pwa_icon(PWA_ICONS[path]))
 
     def read_body(self):
         # This server does not implement chunked requests. Reject ambiguous framing.
@@ -1421,6 +1536,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_bytes(200, "text/html; charset=utf-8", html, nonce=nonce)
         if method == "GET" and path == "/favicon.ico":
             return self.send_bytes(204, "image/x-icon", b"")
+        if method == "GET" and path in PWA_PATHS:
+            return self.send_pwa(path)
         if not path.startswith("/api/"):
             return self.send_json(404, {"ok": False, "error": "Not found."})
         ip = self.client_ip()

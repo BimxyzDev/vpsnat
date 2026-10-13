@@ -9,6 +9,7 @@ VPSNAT adalah manager VPS berbasis LXD + Linux NAT untuk provisioning, port forw
 - Multi-node dashboard
 - Bot Telegram untuk admin
 - **Web panel**: login admin dan user, resource live, reinstall, ganti password, REST API admin
+- **PWA**: panel bisa dipasang sebagai aplikasi di HP/desktop (butuh HTTPS), dengan dark mode otomatis
 - **Domain + HTTPS** otomatis (nginx + Let's Encrypt) atau Cloudflare Tunnel
 
 ## Requirement
@@ -39,6 +40,7 @@ vpsnat/
 ├── bot.sh
 ├── install.sh
 ├── update.sh
+├── get.sh
 ├── settings.sh
 ├── cli.sh
 ├── bot.py
@@ -194,6 +196,16 @@ Telegram (`/nodes`) — hasilnya identik dengan CLI, cuma beda cara aksesnya.
 
 Ubuntu/Debian host dengan kernel dan privilege yang mendukung LXD direkomendasikan.
 
+### Satu perintah (Bash URL)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/BimxyzDev/vpsnat/main/get.sh | sudo bash
+```
+
+Mengunduh commit terbaru branch `main`, menjalankan tes, lalu meng-install (jika belum terpasang) atau meng-upgrade. Script yang sama dipakai untuk update; lihat bagian *Update dari GitHub*.
+
+### Dari git clone
+
 ```bash
 git clone https://github.com/BimxyzDev/vpsnat.git
 cd vpsnat
@@ -274,7 +286,7 @@ Ganti `10.0.0.2` dengan IP sumber proxy yang benar. Jangan memasukkan IP klien u
 
 ### Tampilan
 
-Tema light dengan aksen biru `#2563eb` dan font Inter. Nama dan logo bisa diganti di `/etc/vpsnat/vpsnat.conf`:
+Tema light/dark otomatis mengikuti perangkat, aksen biru `#2563eb`, dan font Inter. Nama dan logo bisa diganti di `/etc/vpsnat/vpsnat.conf`:
 
 ```text
 WEB_BRAND=Bimxyz Official
@@ -283,41 +295,155 @@ WEB_LOGO_URL=https://contoh.com/logo.png
 
 Lalu `vpsnat web restart`. Font memakai Google Fonts dengan fallback ke font sistem.
 
-### API admin
+### PWA (pasang sebagai aplikasi)
 
-```bash
-KEY=<API key>
-curl -H "Authorization: Bearer $KEY" https://panel.contoh.com/api/admin/vps
-curl -H "Authorization: Bearer $KEY" https://panel.contoh.com/api/admin/vps/myvps/resources
-curl -X POST -H "Authorization: Bearer $KEY" -d '{"action":"restart"}' \
-  https://panel.contoh.com/api/admin/vps/myvps/action
-curl -X POST -H "Authorization: Bearer $KEY" \
-  -d '{"name":"demo","cpu":2,"ram":2048,"disk":20,"image":"ubuntu22","plan":"shared","expire":"30d"}' \
-  https://panel.contoh.com/api/admin/vps
+Panel menyajikan `/manifest.webmanifest`, `/sw.js`, dan ikon (`/icon-192.png`, `/icon-512.png`, `/apple-touch-icon.png`) langsung dari `web.py`; tidak ada file statis tambahan.
+
+- **Syarat HTTPS** (atau `localhost`). Lewat `http://IP:port` panel tetap berjalan normal, hanya tanpa fitur pasang/offline. Gunakan `vpsnat web-domain`.
+- **Cara pasang**: Chrome/Edge (Android dan desktop) tombol **Pasang aplikasi** di header/halaman login atau menu browser; iPhone/iPad Safari: Bagikan → **Tambahkan ke Layar Utama**.
+- **Offline**: hanya shell halaman, manifest, dan ikon yang di-cache. Semua `/api/*` selalu ke jaringan, jadi sesi, password VPS, dan data resource tidak pernah disimpan di cache. Saat offline tampil banner dan layar "Tidak dapat terhubung".
+- **Update**: perubahan `web.html` otomatis membuat versi cache baru; panel menampilkan notifikasi untuk memuat ulang.
+- Nama aplikasi mengikuti `WEB_BRAND`. Reverse proxy buatan sendiri harus meneruskan semua path (bukan hanya `/api/`).
+
+### API
+
+Semua endpoint ada di bawah `/api/`. Tab **API** di panel admin memuat dokumentasi yang sama, lengkap dengan contoh curl yang bisa disalin dan pencarian endpoint.
+
+#### Dasar
+
+| Topik | Keterangan |
+|-------|-----------|
+| Admin (skrip) | Header `Authorization: Bearer <WEB_API_KEY>`. Key dibuat/diganti dengan `sudo vpsnat web key` (tampil sekali). Tanpa cookie dan tanpa `X-Requested-With`. |
+| UI (cookie) | Login lewat `/api/login/admin` atau `/api/login/user`; sesi berupa cookie HttpOnly + SameSite=Strict. Setiap `POST`/`DELETE` wajib header `X-Requested-With: vpsnat`. |
+| Format | Body dan respons JSON UTF-8. Body maks 64 KB, harus objek JSON, memakai `Content-Length` (chunked tidak didukung). |
+| Respons | Sukses `{"ok": true, ...}`; gagal `{"ok": false, "error": "pesan"}` dengan status HTTP sesuai. |
+| Rate limit | 5 login gagal per IP per 15 menit (per VPS: 20) membalas `429`. API key salah juga dihitung. |
+
+| Status | Arti |
+|--------|------|
+| 200 / 202 | Berhasil / job dimulai |
+| 400 | Perintah CLI gagal (pesan di `error`) |
+| 401 | Belum login atau API key salah |
+| 403 | Peran tidak sesuai, header `X-Requested-With` hilang, atau VPS disuspend (reinstall user) |
+| 404 | Endpoint, VPS, atau job tidak ditemukan |
+| 409 | VPS sudah ada atau sedang diproses job lain |
+| 413 | Body lebih dari 64 KB |
+| 422 | Validasi input gagal |
+| 429 | Terlalu banyak percobaan login gagal |
+| 500 / 503 | Kesalahan internal / admin belum dikonfigurasi, server sibuk, atau job tidak bisa dijalankan |
+
+#### Job (operasi panjang)
+
+Create, delete, dan reinstall membalas `202 {"ok": true, "job": "<id 12 hex>"}`. Polling `GET /api/admin/jobs/{id}` (user: `/api/me/jobs/{id}`) tiap 2-3 detik sampai `status` bukan `running`.
+
+```json
+{"ok": true, "job": {"id": "a1b2c3d4e5f6", "kind": "create", "name": "demo",
+  "status": "running", "rc": null, "output": "", "started": 1790000000, "finished": null}}
 ```
 
-| Method | Path | Keterangan |
-|--------|------|-----------|
-| GET | `/api/admin/host` | info host dan hitungan VPS |
-| GET / POST | `/api/admin/vps` | daftar / buat VPS (job) |
-| GET / DELETE | `/api/admin/vps/{n}` | detail + password / hapus (job) |
-| GET | `/api/admin/vps/{n}/resources` | CPU, RAM, disk, network |
-| POST | `/api/admin/vps/{n}/action` | `start` `stop` `restart` `suspend` `unsuspend` |
-| POST | `/api/admin/vps/{n}/reinstall` | `{image}` (job) |
-| POST | `/api/admin/vps/{n}/passwd` | `{password?}` kosong = random |
-| POST | `/api/admin/vps/{n}/resize` | `{cpu, ram, disk}` |
-| POST | `/api/admin/vps/{n}/renew` | `{duration}` contoh `30d` |
-| POST | `/api/admin/vps/{n}/expire` | `{value}` contoh `2026-12-31`, `never` |
-| POST | `/api/admin/vps/{n}/owner` | `{owner}` |
-| POST | `/api/admin/vps/{n}/plan` | `{plan}` `shared` / `dedicated` |
-| POST | `/api/admin/vps/{n}/bandwidth` | `{action: set/limit/reset, quota_gb, rate_mbit}` |
-| POST / DELETE | `/api/admin/vps/{n}/ports[/{port}]` | `{proto, count}` / hapus port |
-| GET / POST | `/api/admin/settings` | lihat / ubah setting |
-| POST | `/api/admin/sync` | sinkronkan DB dengan LXD |
-| GET | `/api/admin/nodes` | dashboard multi-node |
-| GET | `/api/admin/jobs[/{id}]` | status job |
+`kind`: `create`, `delete`, `reinstall`. `status`: `running`, `done`, `error`, `interrupted` (job terputus karena service restart; tidak diulang otomatis). Password pada output job disamarkan; ambil lewat `GET /api/admin/vps/{name}`.
 
-Operasi panjang (create, delete, reinstall) mengembalikan `202 {"job":"<id>"}`; polling `/api/admin/jobs/<id>` sampai `status` bukan `running`. Respons selalu JSON `{"ok": true|false, ...}`; error berisi `error`.
+#### Contoh alur
+
+```bash
+KEY=<API key>; BASE=https://panel.contoh.com
+H="Authorization: Bearer $KEY"
+
+# 1. buat VPS (job)
+JOB=$(curl -s -X POST -H "$H" \
+  -d '{"name":"demo","cpu":2,"ram":2048,"disk":20,"ports":5,"expire":"30d"}' \
+  $BASE/api/admin/vps | jq -r .job)
+
+# 2. tunggu selesai
+while [ "$(curl -s -H "$H" $BASE/api/admin/jobs/$JOB | jq -r .job.status)" = running ]; do sleep 3; done
+
+# 3. ambil detail + password
+curl -s -H "$H" $BASE/api/admin/vps/demo
+```
+
+#### Format detail VPS
+
+```json
+{"ok": true, "vps": {"name": "demo", "state": "RUNNING", "suspended": false, "reason": "-",
+  "plan": "shared", "backend": "container", "cpu": 2, "ram": 2048, "disk": 20,
+  "created": "2026-10-01", "expires": 1790000000, "host": "203.0.113.10", "ssh": 20000,
+  "ports": [{"public": 20000, "internal": 22, "proto": "tcp", "ssh": true}],
+  "bw": {"used": 0, "rx": 0, "tx": 0, "quota": 0, "rate": 0, "exhausted": false},
+  "ip": "10.10.10.2", "owner": "-", "password": "..."}}
+```
+
+`ram` MB, `disk` GB, `expires` epoch detik (0 = tanpa expired), `bw.*` byte (`rate` Mbps). `ip`/`owner` hanya untuk admin; `password` hanya di endpoint detail. Daftar (`GET /api/admin/vps`) tidak memuat `password`.
+
+#### Autentikasi & sesi
+
+| Method | Path | Body | Keterangan |
+|--------|------|------|-----------|
+| GET | `/api/session` | - | `{ok, brand, logo, role, name}`; `role` = `admin`/`user`/`null` |
+| POST | `/api/login/admin` | `username`, `password` | Cookie sesi; 401/429/503 |
+| POST | `/api/login/user` | `identifier` (nama VPS atau port SSH), `password` | Cookie sesi; VPS hasil `sync` (password `unknown`) tidak bisa login |
+| POST | `/api/logout` | `{}` | Cabut sesi |
+
+#### User (cookie sesi user; API key admin tidak berlaku)
+
+| Method | Path | Body | Keterangan |
+|--------|------|------|-----------|
+| GET | `/api/me` | - | Detail VPS sendiri + password |
+| GET | `/api/me/resources` | - | CPU, RAM, disk, network, bandwidth live |
+| POST | `/api/me/action` | `action`: `start`/`stop`/`restart` | |
+| POST | `/api/me/passwd` | `password?` | 8-64 karakter `A-Za-z0-9@%^*_+=.,:;!?~-`; kosong = acak |
+| POST | `/api/me/reinstall` | `image?`, `confirm` (= nama VPS) | Job; 403 jika disuspend/kuota habis |
+| GET | `/api/me/jobs/{id}` | - | Job milik sendiri |
+
+#### Admin: VPS
+
+`{name}` = nama VPS. `image`: `ubuntu24`, `ubuntu22` (default), `ubuntu20`, `debian12`, `debian11`, `alma9`, `rocky9`, `alpine`.
+
+| Method | Path | Body | Keterangan |
+|--------|------|------|-----------|
+| GET | `/api/admin/host` | - | IP publik, CPU, RAM, disk, uptime, domain panel, hitungan VPS |
+| GET | `/api/admin/vps` | - | Daftar VPS + `limits: {ports_min, ports_max}` |
+| POST | `/api/admin/vps` | lihat bawah | Buat VPS (job); 409 jika nama sudah ada |
+| GET | `/api/admin/vps/{name}` | - | Detail + password |
+| DELETE | `/api/admin/vps/{name}` | - | Hapus permanen (job); tanpa konfirmasi di API |
+| GET | `/api/admin/vps/{name}/resources` | - | Resource live |
+| POST | `/api/admin/vps/{name}/action` | `action`: `start` `stop` `restart` `suspend` `unsuspend` | |
+| POST | `/api/admin/vps/{name}/reinstall` | `image?` | Job |
+| POST | `/api/admin/vps/{name}/passwd` | `password?` | Kosong = acak; respons memuat `password` |
+| POST | `/api/admin/vps/{name}/resize` | `cpu?` 1-128, `ram?` MB 128-1048576, `disk?` GB (tidak boleh mengecil, maks 10000) | Field yang tidak dikirim tetap |
+| POST | `/api/admin/vps/{name}/renew` | `duration` mis. `30d` | Durasi relatif positif (`h`/`d`/`w`/`m`); reset counter bandwidth |
+| POST | `/api/admin/vps/{name}/expire` | `value`: `30d`, `YYYY-MM-DD`, `never`, `0` | Maks 10 tahun |
+| POST | `/api/admin/vps/{name}/owner` | `owner` | Maks 60 karakter, tanpa `\|`; kosong = `-` |
+| POST | `/api/admin/vps/{name}/plan` | `plan`: `shared`/`dedicated` | |
+| POST | `/api/admin/vps/{name}/bandwidth` | `action`: `set`/`limit`/`reset`, `quota_gb`, `rate_mbit` | `set` memakai keduanya (0 = tanpa batas); `limit` hanya `rate_mbit` |
+| POST | `/api/admin/vps/{name}/ports` | `proto?`: `tcp` (default)/`udp`/`both`, `count?` 1-500 | Tambah port berurutan |
+| DELETE | `/api/admin/vps/{name}/ports/{port}` | - | Hapus port aplikasi (nomor publik); port SSH tidak bisa |
+
+Body `POST /api/admin/vps`:
+
+| Field | Tipe | Default | Keterangan |
+|-------|------|---------|-----------|
+| `name` | string | wajib | `a-z0-9-`, awal huruf/angka, maks 31 karakter |
+| `image` | string | `ubuntu22` | lihat daftar di atas |
+| `cpu` / `ram` / `disk` | integer | 1 / 1024 / 10 | 1-128 / MB 128-1048576 / GB 1-10000 |
+| `ports` | integer | 3 | 2-50 total, termasuk 1 SSH |
+| `plan` | string | `shared` | `shared`/`dedicated` |
+| `backend` | string | `container` | `container`/`vm` |
+| `expire` | string | `0` | `30d`, `2w`, `1m`, `12h`, `YYYY-MM-DD`, `never`, `0` |
+| `owner` | string | `-` | maks 60 karakter, tanpa `\|` |
+| `nesting` | boolean | `true` | hanya container |
+| `password` | string | acak | 8-64 karakter |
+| `bw_quota_gb` / `bw_rate_mbit` | number | default setting | 0-1000000 / 0-100000 |
+
+#### Admin: sistem
+
+| Method | Path | Body | Keterangan |
+|--------|------|------|-----------|
+| GET | `/api/admin/settings` | - | `{settings, keys}` |
+| POST | `/api/admin/settings` | `key`, `value` | `key`: `grace`, `shared-suspend-minutes`, `shared-threshold`, `monitor-interval`, `bandwidth-default-quota`, `bandwidth-default-rate`; `value` angka 0-1000000 |
+| POST | `/api/admin/sync` | `{}` | Sinkronkan DB dengan LXD; guest tanpa record diimpor suspend |
+| GET | `/api/admin/nodes` | - | Dashboard multi-node (teks di `output`) |
+| GET | `/api/admin/jobs` | - | 30 job terbaru |
+| GET | `/api/admin/jobs/{id}` | - | Satu job |
 
 ### Keamanan web panel
 
@@ -344,6 +470,27 @@ Bot memakai `python-telegram-bot` di virtualenv `/etc/vpsnat/bot/venv` dan hanya
 Panel mengirim nilai jumlah port tervalidasi ke CLI melalui argumen eksplisit serta environment `NPORTS`. CLI mengecek jumlah port unik yang benar-benar tersimpan di database; jika tidak cocok dengan permintaan (misalnya input 5 tetapi hanya 1 tersimpan), proses create dibatalkan dan tidak dilaporkan sukses. Setelah menimpa file source, jalankan `sudo bash vpsnat upgrade` dari folder repository agar runtime CLI dan file web di `/etc/vpsnat/web/` ikut diperbarui.
 
 ## Update dari GitHub
+
+### Bash URL (paling cepat)
+
+```bash
+# Install baru atau update ke commit terbaru
+curl -fsSL https://raw.githubusercontent.com/BimxyzDev/vpsnat/main/get.sh | sudo bash
+
+# Cek saja, tanpa mengubah instalasi
+curl -fsSL https://raw.githubusercontent.com/BimxyzDev/vpsnat/main/get.sh | sudo bash -s -- --check
+
+# Paksa pasang ulang commit yang sama
+curl -fsSL https://raw.githubusercontent.com/BimxyzDev/vpsnat/main/get.sh | sudo bash -s -- --force
+```
+
+`get.sh` mengambil SHA commit terbaru dari GitHub, mengunduh source pada commit itu, menjalankan `test.sh`, lalu `install` (belum terpasang) atau `upgrade` (sudah terpasang), dan mencatat SHA di `/etc/vpsnat/source.commit`. Tidak perlu `git clone`, dan bisa dipakai di instalasi lama yang belum punya `vpsnat update`. Seluruh isinya dibungkus fungsi yang dipanggil di baris terakhir, sehingga unduhan terpotong tidak menjalankan perintah setengah jadi.
+
+Opsi lewat environment: `VPSNAT_REPO=owner/repo`, `VPSNAT_BRANCH=branch`, `VPSNAT_REF=<sha 40 hex>` (kunci ke satu commit), `VPSNAT_SKIP_TESTS=1`. Contoh: `curl -fsSL <url>/get.sh | sudo env VPSNAT_BRANCH=dev bash`.
+
+Catatan: `raw.githubusercontent.com` men-cache beberapa menit, jadi commit yang baru di-push bisa tertunda. Script ini berjalan sebagai root; untuk memeriksanya dulu: `curl -fsSL <url>/get.sh -o get.sh && less get.sh && sudo bash get.sh`. Tanpa terminal (mis. cron/CI), installer berjalan non-interaktif dengan nilai default.
+
+### Perintah `vpsnat update`
 
 Updater mengambil SHA commit dan nomor versi dari repository GitHub `BimxyzDev/vpsnat` (branch `main`), mengunduh source pada commit tersebut, menjalankan `test.sh`, lalu menjalankan proses upgrade hanya jika tes lulus. SHA yang berhasil dipasang dicatat di `/etc/vpsnat/source.commit`, agar pemeriksaan update tidak hanya bergantung pada nomor versi.
 

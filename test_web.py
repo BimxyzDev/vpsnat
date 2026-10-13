@@ -7,6 +7,7 @@ import concurrent.futures
 import stat
 import os
 import socket
+import struct
 import subprocess
 import sys
 import tempfile
@@ -227,6 +228,27 @@ try:
     hc.request("GET", "/api/session"); r2 = hc.getresponse(); r2.read()
     check("keep-alive sehat setelah 404 ber-body", (r1.status, r2.status), (404, 200))
     check("API key salah", call(anon, "GET", "/api/admin/vps", hdr={"Authorization": "Bearer nope"})[0], 401)
+
+    # PWA: manifest, service worker, ikon, dan CSP yang memperbolehkannya
+    def raw(path):
+        r = urllib.request.urlopen(B + path, timeout=5)
+        return r.status, r.headers, r.read()
+    st, h, body = raw("/manifest.webmanifest")
+    mf = json.loads(body)
+    check("manifest PWA", (st, h.get_content_type(), mf["display"], mf["name"], mf["short_name"]), (200, "application/manifest+json", "standalone", "Test Brand Panel", "Test Brand"))
+    check("manifest ikon 192 dan 512", sorted(i["sizes"] for i in mf["icons"]), ["192x192", "512x512"])
+    st, h, body = raw("/sw.js")
+    check("service worker disajikan", (st, h.get_content_type(), b"vpsnat-" in body, b"%V%" in body), (200, "text/javascript", True, False))
+    check("service worker scope root", h.get("Service-Worker-Allowed"), "/")
+    check("service worker tidak men-cache /api/", b"startsWith('/api/')" in body, True)
+    for path, size in (("/icon-192.png", 192), ("/icon-512.png", 512), ("/apple-touch-icon.png", 180)):
+        st, h, body = raw(path)
+        check("ikon " + path, (st, h.get_content_type(), body[:8], struct.unpack(">II", body[16:24])), (200, "image/png", b"\x89PNG\r\n\x1a\n", (size, size)))
+    st, h, body = raw("/")
+    csp = h.get("Content-Security-Policy", "")
+    check("CSP mengizinkan manifest + worker same-origin", ("manifest-src 'self'" in csp, "worker-src 'self'" in csp), (True, True))
+    check("HTML memuat link manifest", b'rel="manifest"' in body, True)
+    check("path PWA tak dikenal 404", call(anon, "GET", "/icon-999.png")[0], 404)
     for i in range(6):
         r = call(opener(), "POST", "/api/login/user", {"identifier": "demo", "password": f"w{i}"})
     check("rate limit login", r[0], 429)

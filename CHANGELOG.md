@@ -1,5 +1,21 @@
 # Changelog
 
+## 3.3.0 — 2026-10-13
+
+### Ditambahkan
+- **PWA**: web panel kini bisa dipasang sebagai aplikasi (manifest `/manifest.webmanifest`, service worker `/sw.js`, ikon PNG dibuat otomatis oleh `web.py`). Butuh HTTPS. Service worker hanya men-cache shell halaman, manifest, dan ikon; semua `/api/*` tidak pernah di-cache. Ada tombol "Pasang aplikasi", banner offline, layar offline, dan notifikasi versi baru. CSP ditambah `manifest-src 'self'; worker-src 'self'`.
+- **`get.sh` (Bash URL)**: install atau update ke commit terbaru dengan satu perintah `curl -fsSL .../get.sh | sudo bash` (opsi `--check`, `--force`; env `VPSNAT_REPO`, `VPSNAT_BRANCH`, `VPSNAT_REF`, `VPSNAT_SKIP_TESTS`). Berfungsi juga untuk instalasi lama yang belum punya `vpsnat update`.
+- Dokumentasi API lengkap di README dan tab **API** pada panel: autentikasi, kode status, job, parameter tiap endpoint, contoh curl yang bisa disalin, pencarian endpoint, serta endpoint user `/api/me*`.
+
+### UI
+- Dark mode otomatis mengikuti perangkat, token warna konsisten, focus ring, area aman (safe area) untuk HP.
+- Sheet detail VPS sebagai dialog (Esc/klik latar menutup, scroll terkunci); kartu VPS bisa dibuka dengan keyboard.
+- Placeholder loading, empty state, tab mobile muat tanpa scroll, input 16px agar iOS tidak zoom, sheet layar penuh di HP.
+- Gagal jaringan ditangani dengan pesan jelas; polling job dilanjutkan otomatis setelah koneksi kembali.
+
+### Tes
+- `test_web.py` menguji manifest, service worker, ikon, dan CSP; `test.sh` memeriksa `get.sh`.
+
 ## 3.2.5 — 2026-10-12
 
 ### Security & reliability hardening

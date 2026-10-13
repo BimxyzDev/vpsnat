@@ -66,6 +66,9 @@ safe_password 'Passw0rd!23'
 ! safe_password 'short1'
 ! safe_password "$(printf 'a%.0s' {1..100})"
 grep -q 'api.github.com/repos/' "$ROOT/update.sh"
+grep -q 'vnd.github.sha' "$ROOT/get.sh"
+bash "$ROOT/get.sh" --help | grep -q '^Usage: get.sh'
+! bash "$ROOT/get.sh" --bukan-opsi >/dev/null 2>&1
 grep -q 'with_alloc_lock _vps_create_locked' "$ROOT/vps.sh"
 grep -q 'with_alloc_lock _port_add_locked' "$ROOT/ports.sh"
 grep -q 'with_alloc_lock _vps_sync_locked' "$ROOT/data.sh"
