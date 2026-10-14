@@ -882,7 +882,7 @@ def logout(req):
 def branding():
     c = conf()
     logo = c.get("WEB_LOGO_URL", "")
-    return {"brand": (c.get("WEB_BRAND") or "VPSNAT")[:40], "logo": logo if logo.startswith("https://") else ""}
+    return {"brand": (c.get("WEB_BRAND") or "B-NAT Manager")[:40], "logo": logo if logo.startswith("https://") else ""}
 
 
 @route("GET", "/api/session")
