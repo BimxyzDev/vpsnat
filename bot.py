@@ -68,8 +68,9 @@ ADMINS = {
 # Operasi berat diserialkan agar create/reinstall/backup tidak saling bertabrakan.
 _op_lock = asyncio.Lock()
 # token -> (chat_id, argv, env, expiry)
-_pending: dict[str, tuple[int, list[str], dict[str, str], float]] = {}
-# token -> (chat_id, action, data, expiry)
+_pending: dict[str, tuple[int, int, list[str], dict[str, str], float]] = {}
+# token -> (chat_id, user_id, argv, env, expiry); user_id mencegah admin lain di grup
+# menekan konfirmasi milik orang lain (v3.4.1).
 _ui_tokens: dict[str, tuple[int, str, dict[str, Any], float]] = {}
 # user_id -> state
 _user_state: dict[int, dict[str, Any]] = {}
@@ -142,7 +143,7 @@ def valid_name(name: str) -> bool:
 def cleanup_expired_memory() -> None:
     now = time.time()
     for token, item in list(_pending.items()):
-        if item[3] < now:
+        if item[4] < now:
             _pending.pop(token, None)
     for token, item in list(_ui_tokens.items()):
         if item[3] < now:
@@ -822,8 +823,11 @@ async def cmd_reinstall(update, ctx):
 
 # ---------------- confirmation ----------------
 async def confirm_cli(update: Update, text: str, argv: list[str], env: dict[str, str] | None = None, back_to: str = "menu:home") -> None:
-    token = secrets.token_hex(4)
-    _pending[token] = (update.effective_chat.id, argv, env or {}, time.time() + TOKEN_TTL)
+    cleanup_expired_memory()
+    # v3.4.1: token 128-bit + di-bind ke user_id (bukan hanya chat_id), sehingga di grup
+    # admin lain tidak bisa menekan "Ya, lanjut" milik admin pertama untuk aksi destruktif.
+    token = secrets.token_urlsafe(16)
+    _pending[token] = (update.effective_chat.id, update.effective_user.id, argv, env or {}, time.time() + TOKEN_TTL)
     kb = InlineKeyboardMarkup(
         [
             [
@@ -1115,8 +1119,9 @@ async def execute_snapshot_token(query, mode: str, token: str) -> None:
 
 
 async def ask_confirm_query(query, text: str, argv: list[str], back_to: str, env: dict[str, str] | None = None) -> None:
-    token = secrets.token_hex(4)
-    _pending[token] = (query.message.chat_id, argv, env or {}, time.time() + TOKEN_TTL)
+    cleanup_expired_memory()
+    token = secrets.token_urlsafe(16)
+    _pending[token] = (query.message.chat_id, query.from_user.id, argv, env or {}, time.time() + TOKEN_TTL)
     kb = InlineKeyboardMarkup(
         [
             [InlineKeyboardButton("✅ Ya, lanjut", callback_data=f"ok:{token}"), InlineKeyboardButton("✖ Batal", callback_data=f"no:{token}")],
@@ -1209,6 +1214,11 @@ async def show_reinstall_menu(query, name: str) -> None:
 
 
 async def execute_reinstall(query, name: str, image: str) -> None:
+    # v3.4.1: image dari callback_data tidak pernah divalidasi (validasi hanya ada di
+    # /reinstall dan input custom), padahal nilainya diteruskan sebagai env IMG_KEY ke CLI.
+    if not valid_name(name) or not IMAGE_RE.fullmatch(image or ""):
+        await edit(query, "❌ Nama atau image tidak valid.", reply_markup=main_keyboard())
+        return
     await ask_confirm_query(
         query,
         f"REINSTALL <b>{esc(name)}</b> dengan <code>{esc(image)}</code>? Semua data akan hilang.",
@@ -1263,6 +1273,27 @@ async def on_button(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     cleanup_expired_memory()
     data = query.data or ""
+
+    # v3.4.1: validasi terpusat. Sebelumnya hanya cabang "vps:" yang memanggil valid_name();
+    # cabang lain meneruskan nama dari callback_data langsung sebagai argv CLI, sehingga nama
+    # berawalan '-' menjadi option injection (mis. "--force") dan nama berisi ':' merusak split.
+    # Peta eksplisit: hanya prefix yang benar-benar membawa nama VPS yang divalidasi.
+    _CB_NAME_AT = {
+        "vps": 1, "vpsinfo": 1, "vpsstats": 1, "vpsbw": 1, "vpsplan": 1,
+        "act": 2, "danger": 2,
+        "renew": 1, "setexpire": 1, "setplan": 1, "owner": 1,
+        "resizecpu": 1, "resizeram": 1, "resizedisk": 1,
+        "passwdgen": 1, "bwpreset": 1, "bwreset": 1,
+        "portadd": 1, "portdel": 1, "portproto": 1, "ports": 1,
+        "snapshot": 1, "snapcreate": 1, "snaprestore": 1, "snapdelete": 1,
+        "reinstall": 1,
+    }
+    _cb = data.split(":")
+    if _cb[0] in _CB_NAME_AT:
+        _ni = _CB_NAME_AT[_cb[0]]
+        if len(_cb) <= _ni or not valid_name(_cb[_ni]):
+            await edit(query, "❌ Nama VPS pada tombol tidak valid.", reply_markup=main_keyboard())
+            return
 
     try:
         if data == "noop":
@@ -1442,7 +1473,7 @@ async def on_button(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             set_state(uid, "port_count", name=name, proto=proto)
             await edit(
                 query,
-                f"➕ <b>Tambah Port — {esc(name)}</b>\n\n2/2: kirim <b>jumlah port</b> (1–500).\nPublic port akan dialokasikan otomatis secara kontigu; port internal disamakan.",
+                f"➕ <b>Tambah Port — {esc(name)}</b>\n\n2/2: kirim <b>jumlah port</b> (1–500).\nPublic port dialokasikan otomatis (kontigu; bila tidak muat dipecah maksimal 3 blok); port internal disamakan.",
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Batal", callback_data=f"ports:{name}")]]),
             )
             return
@@ -1539,13 +1570,23 @@ async def on_button(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 async def handle_confirmation(query, action: str, token: str) -> None:
     item = _pending.pop(token, None)
-    if not item or item[3] < time.time() or item[0] != query.message.chat_id:
+    # Tuple v3.4.1: (chat_id, user_id, argv, env, exp). Cocokkan chat DAN user, karena
+    # tombol konfirmasi terlihat oleh semua anggota grup.
+    from_id = getattr(query.from_user, "id", None) if getattr(query, "from_user", None) else None
+    chat_id = query.message.chat_id if getattr(query, "message", None) else None
+    if (
+        not item
+        or len(item) != 5
+        or item[4] < time.time()
+        or item[0] != chat_id
+        or item[1] != from_id
+    ):
         await edit(query, "❌ Konfirmasi kedaluwarsa / tidak valid.", reply_markup=main_keyboard())
         return
     if action == "no":
         await edit(query, "✅ Dibatalkan.", reply_markup=main_keyboard())
         return
-    _, argv, env, _ = item
+    _, _, argv, env, _ = item
     await edit(query, "⏳ <b>Memproses…</b>")
     async with _op_lock:
         rc, out = await run_cli(argv, env, yes=True, timeout=1800 if argv[0] in {"delete", "reinstall", "backup"} else 900)
@@ -1729,8 +1770,9 @@ async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 await reply(update, "❌ Format image tidak valid.")
                 return
             clear_state(uid)
-            token = secrets.token_hex(4)
-            _pending[token] = (update.effective_chat.id, ["reinstall", name], {"IMG_KEY": value}, time.time() + TOKEN_TTL)
+            cleanup_expired_memory()
+            token = secrets.token_urlsafe(16)
+            _pending[token] = (update.effective_chat.id, update.effective_user.id, ["reinstall", name], {"IMG_KEY": value}, time.time() + TOKEN_TTL)
             kb = InlineKeyboardMarkup([
                 [InlineKeyboardButton("✅ Ya, reinstall", callback_data=f"ok:{token}"), InlineKeyboardButton("✖ Batal", callback_data=f"no:{token}")],
                 [InlineKeyboardButton("⬅️ VPS", callback_data=f"vps:{name}")],

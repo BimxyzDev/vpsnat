@@ -7,6 +7,7 @@ VPSNAT adalah manager VPS berbasis LXD + Linux NAT untuk provisioning, port forw
 - Provisioning VPS container/VM (LXD) dengan NAT, port forwarding otomatis, dan quota bandwidth
 - Model shared vs dedicated, auto-suspend, expiry, snapshot, dan relay WireGuard
 - Multi-node dashboard
+- **Hardening (v3.4.0)**: limit proses, anti-spoofing NIC, blokir SMTP outbound, batas koneksi per VPS, MSS clamp relay, preflight ruang disk, backup DB sebelum upgrade, auto-suspend leaky bucket
 - Bot Telegram untuk admin
 - **Web panel**: login admin dan user, resource live, ganti password, REST API admin
 - **PWA**: panel bisa dipasang sebagai aplikasi di HP/desktop (butuh HTTPS), dengan dark mode otomatis
@@ -29,6 +30,7 @@ vpsnat/
 ├── core.sh
 ├── db.sh
 ├── network.sh
+├── harden.sh
 ├── relay.sh
 ├── ports.sh
 ├── bandwidth.sh
@@ -64,10 +66,57 @@ vpsnat/
 
 ## Model shared vs dedicated
 
-- **shared**: tetap memakai batas CPU/RAM LXD. Monitor berjalan berkala; jika CPU atau RAM mencapai 100% secara terus-menerus selama threshold, VPS otomatis disuspend.
+- **shared**: tetap memakai batas CPU/RAM LXD. Monitor berjalan berkala; beban penuh (CPU/RAM di ambang) yang terakumulasi selama threshold membuat VPS otomatis disuspend. Sampel normal hanya mengurangi skor (leaky bucket), tidak mereset hitungan — lihat bagian *Hardening*.
 - **dedicated**: tidak terkena auto-suspend berbasis CPU/RAM. Bandwidth speed limit dapat diatur dengan `tc`.
 
 Default auto-suspend shared: **60 menit**. Interval monitoring default: **15 detik**.
+
+## Hardening (v3.4.0)
+
+Perlindungan host dari VPS yang abusif. Semua default bisa diubah lewat `vpsnat settings set ...` atau `vpsnat.conf`.
+
+| Perlindungan | Default | Pengaturan |
+|---|---|---|
+| Limit proses per container (anti fork-bomb, `limits.processes`) | shared 512, dedicated 2048 | `proc-limit-shared`, `proc-limit-dedicated` (0 = tanpa batas) |
+| Anti-spoofing NIC (`security.mac_filtering`, `security.ipv4_filtering`, `security.ipv6_filtering` best-effort) | aktif | `ANTISPOOF=0` di `vpsnat.conf` |
+| Blokir SMTP outbound dari VPS | aktif, port `25,465,587` | `smtp-block` (0/1), `SMTP_BLOCK_PORTS` |
+| Batas koneksi baru concurrent per VPS (conntrack `connlimit`) | 1024 | `conn-limit` (0 = nonaktif) |
+| MSS clamp relay & node (`TCPMSS --clamp-mss-to-pmtu`) | otomatis | — |
+| Preflight ruang disk | aktif | `PREFLIGHT=0`, `PREFLIGHT_BUFFER_GB` (2), `PREFLIGHT_CREATE_GB` (3) |
+| Backup DB sebelum upgrade | otomatis | `DB_BACKUP_KEEP` (5) |
+
+VPS baru, `clone`, `reinstall`, dan `set-type` otomatis ter-hardening. Untuk VPS lama:
+
+```bash
+vpsnat harden --check      # laporan limit proses + status filter NIC tiap VPS
+vpsnat harden all          # terapkan ke semua VPS (filter NIC pada VPS berjalan dapat memutus jaringan beberapa detik)
+vpsnat harden web1         # satu VPS
+```
+
+Catatan penting:
+
+- Anti-spoofing memblokir paket dengan MAC/IP yang bukan milik VPS. VPS yang menjalankan bridge/LXD bersarang dengan MAC lain di belakang `eth0` akan terblokir; matikan dengan `ANTISPOOF=0` bila memang dibutuhkan.
+- Blokir SMTP juga menutup 465/587. Aplikasi yang mengirim email lewat relay SMTP eksternal pada port itu akan terblokir; gunakan `vpsnat settings set smtp-block 0` atau `SMTP_BLOCK_PORTS=25`.
+- `conn-limit` menghitung koneksi baru keluar dari VPS (semua protokol). Beban DNS/crawler/proxy tinggi mungkin butuh nilai lebih besar.
+- Guard firewall memakai modul kernel `xt_connlimit` dan `xt_multiport`. Jika tidak ada, guard terkait dilewati dengan peringatan dan firewall tetap berjalan.
+- `limits.processes` hanya untuk container; VM tidak mengenalnya.
+
+### Auto-suspend shared: leaky bucket
+
+Versi ≤ 3.3 mereset hitungan pada satu sampel di bawah ambang, sehingga pola "penuh 55 menit + 1 sampel idle" tidak pernah tersuspend. Sejak 3.4.0 tiap VPS shared punya skor penalti (detik) di `/etc/vpsnat/monitor/<nama>.penalty`: naik sebesar lama sampel saat beban penuh, turun `PENALTY_DECAY_PERCENT` (25%) dari lama sampel saat normal. VPS disuspend bila skor ≥ `SHARED_SUSPEND_MINUTES` × 60.
+
+- Ambang CPU = `SHARED_RESOURCE_THRESHOLD` − `SHARED_CPU_TOLERANCE` (default 100 − 2). Rata-rata CPU per 15 detik hampir tak pernah tepat 100% walau VPS memakai semua core. RAM tanpa toleransi (usage cgroup dapat memuat page cache).
+- Langkah per sampel dibatasi 4× interval agar jeda monitor tidak melonjakkan skor.
+- Monitor menunggu lock alokasi paling lama `MONITOR_LOCK_TIMEOUT` (20 detik). Auto-suspend yang gagal karena lock dicoba lagi pada siklus berikutnya.
+- Kolom DB `high_since` tidak dipakai lagi (nilai lama dimigrasikan otomatis jadi skor awal). Schema tetap 25 field.
+
+### Preflight ruang disk
+
+`create`, `clone`, `snapshot create`, `backup`, dan `restore-backup` ditolak lebih awal bila ruang bebas < operasi × 1,2 + buffer 2 GB. Ruang bebas = yang lebih kecil antara sisa pool LXD dan filesystem host. Perkiraan operasi: create = image (3 GB; kuota disk thin-provisioned tidak dihitung penuh), clone/snapshot = pemakaian disk VPS pada pool `dir` (0 pada ZFS/Btrfs/LVM karena copy-on-write), backup = pemakaian disk VPS pada filesystem host, restore-backup = ukuran file × 2. Bila ruang tak terdeteksi, operasi dilanjutkan dengan peringatan.
+
+### Backup DB
+
+`vpsnat upgrade` menyalin `vps.db` ke `/etc/vpsnat/backups/vps.db.pre-upgrade.v<versi>.<waktu>` (mode 0600, 5 terbaru) sebelum migrasi pertama. Jumlah record dan struktur diverifikasi setelah migrasi; bila tidak cocok, DB dipulihkan otomatis. Backup manual: `vpsnat db-backup` (`vpsnat db-backup list` untuk daftar).
 
 ## Bandwidth
 
@@ -102,6 +151,8 @@ vpsnat port-add myvps tcp 10
 ```
 
 VPSNAT mencari range kontigu kosong, misalnya `20010-20019`, lalu melakukan mapping port publik ke port internal yang sama.
+
+Bila tidak ada satu blok kontigu yang cukup, alokasi dipecah menjadi paling banyak `PORT_SPLIT_MAX_CHUNKS` (default 3) blok kontigu dengan greedy best-fit, misalnya `20014,20020-20029`. Set `PORT_SPLIT_MAX_CHUNKS=1` untuk kembali ke perilaku wajib-kontigu. Port internal tetap sama dengan port publik (kecuali `INT_START` eksplisit, yang berurutan lintas blok).
 
 Saat membuat VPS, **jumlah port total** adalah 2-50 (default 3) dan sudah termasuk 1 port SSH. Contoh: `ports=6` → 1 port SSH + 5 port aplikasi (masing-masing TCP+UDP). Batas ini diatur oleh `VPS_PORTS_MAX` di `core.sh` (dan `PORTS_MAX` di `web.py`; ubah keduanya bersamaan). Port tambahan setelah VPS dibuat memakai `port-add` (1-500 per perintah).
 
@@ -550,6 +601,8 @@ Konfigurasi:
 SHARED_SUSPEND_MINUTES=60
 RESOURCE_SAMPLE_SECONDS=15
 SHARED_RESOURCE_THRESHOLD=100
+SHARED_CPU_TOLERANCE=2
+PENALTY_DECAY_PERCENT=25
 ```
 
 Semua setting dapat diubah tanpa menyunting file konfigurasi manual:
@@ -561,13 +614,18 @@ vpsnat settings set shared-threshold 100
 vpsnat settings set monitor-interval 15
 vpsnat settings set bandwidth-default-quota 500
 vpsnat settings set bandwidth-default-rate 100
+vpsnat settings set shared-cpu-tolerance 2
+vpsnat settings set proc-limit-shared 512
+vpsnat settings set proc-limit-dedicated 2048
+vpsnat settings set conn-limit 1024
+vpsnat settings set smtp-block 1
 ```
 
 Resource percentage dihitung terhadap resource yang dialokasikan. CPU menggunakan delta CPU time LXD terhadap interval sampling dan jumlah vCPU; memory menggunakan memory usage terhadap limit. LXD mengekspos CPU, memory, dan network usage pada state/resources instance.
 
 ## Database compatibility
 
-Database versi lama tetap digunakan. Saat startup/install/upgrade, field tambahan akan otomatis ditambahkan tanpa menghapus data lama.
+Database versi lama tetap digunakan. Saat startup/install/upgrade, field tambahan akan otomatis ditambahkan tanpa menghapus data lama. Sebelum migrasi pada `vpsnat upgrade`, DB dicadangkan ke `/etc/vpsnat/backups/` dan diverifikasi setelahnya. v3.4.0 tidak mengubah schema (tetap 25 field).
 
 ## Security notes
 
@@ -576,6 +634,8 @@ Database versi lama tetap digunakan. Saat startup/install/upgrade, field tambaha
 - Bot hanya menerima user dalam `TG_ADMIN`.
 - Web panel: lihat bagian *Keamanan web panel*. Jangan commit `vpsnat.conf` atau `vps.db` (sudah ada di `.gitignore`).
 - Token callback bot mempunyai TTL.
+- Folder backup DB `/etc/vpsnat/backups/` bermode `0700` dan berisi salinan `vps.db` (termasuk password VPS): ikut dijaga/dihapus bersama DB.
+- Hardening host/VPS (limit proses, anti-spoofing NIC, SMTP block, conn-limit): lihat bagian *Hardening*.
 - Password VPS masih tersimpan pada DB untuk kompatibilitas CLI lama; untuk deployment publik, batasi permission host dengan ketat.
 
 ## Disclaimer

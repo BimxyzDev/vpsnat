@@ -46,6 +46,7 @@ esac
 """, 0o755)
 write(os.path.join(tmp, "fakelxc"), """#!/bin/bash
 [ "$1" = list ] && { echo "demo,RUNNING"; echo "other,STOPPED"; exit 0; }
+echo q >> "$(dirname "$0")/lxc-query-calls"
 N=$(date +%s%N)
 echo "{\\"status\\":\\"Running\\",\\"cpu\\":{\\"usage\\":$((N%100000000000))},\\"memory\\":{\\"usage\\":300000000},\\"disk\\":{\\"root\\":{\\"usage\\":2000000000}},\\"network\\":{\\"eth0\\":{\\"counters\\":{\\"bytes_received\\":1,\\"bytes_sent\\":2}}},\\"processes\\":7}"
 """, 0o755)
@@ -136,6 +137,29 @@ try:
     a = opener()
     check("admin password salah", call(a, "POST", "/api/login/admin", {"username": "bima", "password": "x"})[0], 401)
     check("login admin", call(a, "POST", "/api/login/admin", {"username": "bima", "password": "AdminPass123"})[0], 200)
+
+    # v3.4.0: poller serentak berbagi satu `lxc query` per RES_TTL (single-flight) dan key hardening tersedia.
+    qlog = os.path.join(tmp, "lxc-query-calls")
+
+    def qcount():
+        try:
+            with open(qlog) as qf:
+                return len(qf.read().split())
+        except OSError:
+            return 0
+
+    base_q = qcount()
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as qpool:
+        res_codes = list(qpool.map(lambda _: call(u, "GET", "/api/me/resources")[0], range(8)))
+    check("resource: 8 poller serentak semuanya 200", res_codes, [200] * 8)
+    check("resource: poller serentak berbagi subprocess lxc", 1 <= qcount() - base_q <= 2, True)
+    time.sleep(2.3)
+    before_q = qcount()
+    call(u, "GET", "/api/me/resources")
+    check("resource: cache kedaluwarsa setelah TTL", qcount() - before_q, 1)
+    keys = call(a, "GET", "/api/admin/settings")[1].get("keys", [])
+    check("settings key hardening tersedia", all(k in keys for k in ("conn-limit", "smtp-block", "proc-limit-shared", "proc-limit-dedicated", "shared-cpu-tolerance")), True)
+    check("setting conn-limit via API", call(a, "POST", "/api/admin/settings", {"key": "conn-limit", "value": "500"})[0], 200)
     st, d = call(a, "GET", "/api/admin/vps")
     check("admin list", [v["name"] for v in d["vps"]], ["demo", "other", "susp", "synced", "Legacy_VM.1"])
     check("owner tetap string mentah (UI yang escape)", d["vps"][1]["owner"], "<b>x</b>")
@@ -186,6 +210,15 @@ try:
     check("angka non-finite JSON ditolak", call(a, "POST", "/api/admin/vps/demo/action", {"action": float("nan")}, hdr={"Authorization": "Bearer " + KEY})[0], 400)
     check("list memuat limit port", call(a, "GET", "/api/admin/vps")[1]["limits"], {"ports_min": 2, "ports_max": 50})
     check("VPS nama legacy bisa dibuka", call(a, "GET", "/api/admin/vps/Legacy_VM.1")[0], 200)
+    # v3.4.1: CSRF harus menolak Origin lintas-situs walau X-Requested-With disertakan.
+    check("CSRF: Origin asing ditolak", call(a, "POST", "/api/admin/vps/demo/action", {"action": "start"}, hdr={"Origin": "https://evil.example"})[0], 403)
+    # same-host lolos lapisan CSRF (status bisnis 400 karena VPS demo suspended, bukan 403)
+    check("CSRF: Origin sama-host tidak ditolak 403", call(a, "POST", "/api/admin/vps/demo/action", {"action": "start"}, hdr={"Origin": B})[0] != 403, True)
+    check("CSRF: Origin 'null' ditolak", call(a, "POST", "/api/admin/vps/demo/action", {"action": "start"}, hdr={"Origin": "null"})[0], 403)
+    check("CSRF: Referer asing ditolak", call(a, "POST", "/api/admin/vps/demo/action", {"action": "start"}, hdr={"Referer": "https://evil.example/x"})[0], 403)
+    # v3.4.1: nama berbahaya dari DB tidak boleh dipakai sebagai argumen CLI / URL LXD.
+    check("nama berawalan '-' ditolak", call(a, "GET", "/api/admin/vps/-evil")[0], 404)
+    check("nama dengan '..' ditolak", call(a, "GET", "/api/admin/vps/..%2fetc")[0], 404)
     check("VPS tidak ada -> 404 VPS", call(a, "GET", "/api/admin/vps/tidakada")[1].get("error"), "VPS tidak ditemukan.")
     check("endpoint salah menyebut path", call(a, "GET", "/api/admin/nothing")[1].get("error", "").startswith("Endpoint tidak ditemukan: GET /api/admin/nothing"), True)
     st, d = call(a, "POST", "/api/admin/vps/demo/ports", {"proto": "both", "count": 50})

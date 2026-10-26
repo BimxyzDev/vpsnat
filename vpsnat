@@ -5,7 +5,9 @@ export VPSNAT_APP_DIR="${VPSNAT_APP_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" &
 
 source "${VPSNAT_APP_DIR}/core.sh"
 source "${VPSNAT_APP_DIR}/db.sh"
+source "${VPSNAT_APP_DIR}/audit.sh"
 source "${VPSNAT_APP_DIR}/network.sh"
+source "${VPSNAT_APP_DIR}/harden.sh"
 source "${VPSNAT_APP_DIR}/ports.sh"
 source "${VPSNAT_APP_DIR}/bandwidth.sh"
 source "${VPSNAT_APP_DIR}/vps.sh"

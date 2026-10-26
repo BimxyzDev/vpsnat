@@ -28,3 +28,18 @@ WEB_IP_HEADER=X-Forwarded-For
 # Tampilan
 WEB_BRAND=VPSNAT
 WEB_LOGO_URL=
+# Hardening v3.4.0 (semua opsional; nilai di bawah adalah default)
+PROC_LIMIT_SHARED=512            # limits.processes container shared (0 = tanpa batas)
+PROC_LIMIT_DEDICATED=2048
+ANTISPOOF=1                      # security.mac/ipv4/ipv6_filtering pada NIC VPS
+CONN_LIMIT=1024                  # koneksi baru concurrent per VPS (0 = nonaktif)
+SMTP_BLOCK=1                     # blokir SMTP outbound dari VPS
+SMTP_BLOCK_PORTS=25,465,587
+SHARED_CPU_TOLERANCE=2           # ambang CPU auto-suspend = SHARED_RESOURCE_THRESHOLD - ini
+PENALTY_DECAY_PERCENT=25         # leaky bucket: persen lama sampel normal yang mengurangi skor
+MONITOR_LOCK_TIMEOUT=20          # detik; monitor tidak menunggu lock alokasi lebih lama dari ini
+PREFLIGHT=1                      # cek ruang disk sebelum create/clone/snapshot/backup/restore
+PREFLIGHT_BUFFER_GB=2
+PREFLIGHT_CREATE_GB=3
+PORT_SPLIT_MAX_CHUNKS=3          # 1 = alokasi port wajib satu blok kontigu
+DB_BACKUP_KEEP=5                 # jumlah backup DB pra-upgrade yang disimpan

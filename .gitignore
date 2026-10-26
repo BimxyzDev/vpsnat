@@ -1,0 +1,13 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Lint/log/backup artefak lokal
+*.log
+.bash_history
+*.swp
+
+# VPSNAT runtime (jangan commit DB/konfigurasi produksi)
+/etc/vpsnat/

@@ -60,6 +60,7 @@ tg_notify() {
 __vps_suspend_auto_locked() {
   local n="$1" reason="${2:-manual}"
   db_set_fields "$n" "13=1" "25=$reason" "20=0" || { err "Gagal menyimpan status suspension ${n}; guest tidak dianggap tersuspend."; return 1; }
+  penalty_reset "$n"
   local stop_failed=0 boot_failed=0
   if ! lxc stop "$n" --timeout 20 2>/dev/null && ! lxc stop "$n" --force 2>/dev/null; then
     stop_failed=1
@@ -67,6 +68,7 @@ __vps_suspend_auto_locked() {
   fi
   lxc config set "$n" boot.autostart false 2>/dev/null || { boot_failed=1; err "Gagal menonaktifkan boot.autostart untuk ${n}."; }
   apply_all_rules || { err "${n} ditandai suspended di DB, tetapi firewall gagal diperbarui. Periksa forwarding segera."; return 1; }
+  audit_log "system:monitor" "vps.suspend" "$n" "ok" "reason=${reason}"
   log "SUSPEND ${n} reason=${reason}"
   if (( stop_failed || boot_failed )); then
     err "Suspension ${n} tercatat dan forwarding ditarik, tetapi perlu rekonsiliasi guest/autostart manual."
@@ -92,6 +94,7 @@ __vps_unsuspend_locked() {
     lxc config set "$n" boot.autostart false 2>/dev/null || true
     err "Gagal menyimpan unsuspend ${n}; DB tetap authoritative."; return 1;
   }
+  penalty_reset "$n"
   if ! apply_all_rules; then
     db_set_fields "$n" "13=1" "25=$reason" || err "GAGAL rollback status ${n} setelah firewall gagal."
     lxc config set "$n" boot.autostart false 2>/dev/null || true
@@ -104,6 +107,7 @@ __vps_unsuspend_locked() {
     apply_all_rules || err "Firewall gagal juga setelah rollback unsuspend."
     err "${n} tidak berhasil start; status suspension dipulihkan."; return 1
   fi
+  audit_log "system:expire" "vps.unsuspend" "$n" "ok"
   ok "${n} diaktifkan kembali."
   log "UNSUSPEND ${n}"
 }
@@ -121,6 +125,7 @@ _vps_setexpire_locked() {
   if [[ "$(db_field "$n" 13)" == "1" && "$(db_field "$n" 25)" == "expired" && ( "$e" == "0" || "$e" -gt "$(date +%s)" ) ]]; then
     _vps_unsuspend "$n" || { err "Expiry tersimpan, tetapi ${n} masih suspended karena activation gagal."; return 1; }
   fi
+  audit_log "$(audit_actor_cli)" "vps.set_expire" "$n" "ok" "expires=${e}"
   ok "Expired ${n}: $(fmt_epoch "$e")"
 }
 
@@ -148,6 +153,7 @@ _vps_renew_locked() {
   if [[ "$(db_field "$n" 13)" == "1" && "$reason" == "expired" ]]; then
     _vps_unsuspend "$n" || { err "Renew tersimpan, tetapi ${n} tetap suspended karena activation gagal."; return 1; }
   fi
+  audit_log "$(audit_actor_cli)" "vps.renew" "$n" "ok" "duration=${dur} expires=${e}"
   ok "${n} diperpanjang ${dur}. Expired baru: $(fmt_epoch "$e")"
 }
 
@@ -180,6 +186,7 @@ _vps_setowner_locked() {
   [[ -z "$o" ]] && ask o "Owner (label / chat_id Telegram): "
   [[ "${#o}" -le 60 && "$o" != *"|"* && "$o" != *$'\n'* && "$o" != *$'\r'* ]] || { err "Owner maksimal 60 karakter tanpa pipe/newline."; return 1; }
   db_set_field "$n" 12 "${o:--}" || { err "Gagal menyimpan owner ${n}."; return 1; }
+  audit_log "$(audit_actor_cli)" "vps.set_owner" "$n" "ok" "owner=${o:--}"
   ok "Owner ${n}: ${o:--}"
 }
 
@@ -223,6 +230,7 @@ _vps_expire_check_locked() {
       fi
       if (( now-exp >= grace*86400 )); then
         msg="🗑 VPS ${name} melewati masa tenggang ${grace} hari → DIHAPUS permanen."; info "$msg"; tg_notify "$msg"
+        audit_log "system:expire" "vps.auto_purge" "$name" "ok" "grace=${grace}d"
         if _vps_purge "$name"; then
           rm -f "$NOTIF_DIR/${name}."* 2>/dev/null || true
         else

@@ -31,6 +31,7 @@ _vps_delete_locked() {
   local n; n=$(pick_vps "${1:-}") || return 1
   confirm "HAPUS ${n} beserta datanya?" || { info "Batal."; return 0; }
   _vps_purge_body "$n" || return 1
+  audit_log "$(audit_actor_cli)" "vps.delete" "$n" "ok"
   ok "$n dihapus."
 }
 
@@ -49,6 +50,7 @@ _vps_passwd_locked() {
     printf 'root:%s\n' "$oldpass" | lxc exec "$n" -- chpasswd >/dev/null 2>&1 || warn "Rollback password guest gagal; kredensial guest/DB mungkin berbeda. Periksa ${n} segera."
     err "Gagal menyimpan password ke DB; dicoba mengembalikan password guest ke nilai lama."; return 1
   fi
+  audit_log "$(audit_actor_cli)" "vps.passwd" "$n" "ok"
   ok "Password ${n}: ${pass}"
 }
 
@@ -146,9 +148,10 @@ _vps_create_locked() {
   quota_bytes=$(awk -v g="$quota" 'BEGIN{printf "%.0f", g*1000000000}')
   [[ "$plan" == "shared" && "${BW_LIMIT_MBIT:-0}" != "0" && -n "${BW_LIMIT_MBIT:-}" ]] && warn "Shared tetap boleh punya rate limit; auto-suspend tetap aktif untuk CPU/RAM."
 
+  preflight_create "$disk" || return 1
   ip=$(next_ip) || { err "IP habis."; return 1; }
   local -a alloc
-  plist=$(alloc_ports "$nports") || { err "Port kontigu kosong tidak cukup (butuh ${nports})."; return 1; }
+  plist=$(alloc_ports "$nports") || { err "Port kosong tidak cukup (butuh ${nports}; maksimal $(cfg_int PORT_SPLIT_MAX_CHUNKS "$PORT_SPLIT_MAX_CHUNKS_DEFAULT") blok kontigu)."; return 1; }
   # alloc_ports mengeluarkan satu port per baris; `read -a` hanya membaca baris pertama,
   # sehingga dulu hanya port SSH yang terbuka. mapfile membaca semua baris.
   mapfile -t alloc <<< "$plist"
@@ -191,6 +194,7 @@ _vps_create_locked() {
     lxc config set "$name" security.secureboot false || { err "Gagal menerapkan konfigurasi VM."; _vps_create_cleanup "$name" "$ip" "$ssh_port" "$cpu" "$ram" "$disk" "$portmap" "$pass" "$vtype" "$exp_epoch" "$owner" "$plan" "$quota_bytes" "$normalized"; return 1; }
   fi
   set_static_ip "$name" "$ip" || { err "Gagal reservasi IP."; _vps_create_cleanup "$name" "$ip" "$ssh_port" "$cpu" "$ram" "$disk" "$portmap" "$pass" "$vtype" "$exp_epoch" "$owner" "$plan" "$quota_bytes" "$normalized"; return 1; }
+  vps_harden_apply "$name" "$plan" "$vtype" || warn "Hardening ${name} belum lengkap; ulangi dengan: vpsnat harden ${name}"
   if ! lxc start "$name"; then
     err "Gagal start setelah konfigurasi resource diterapkan. Batas disk dipertahankan; VPS dibatalkan."
     _vps_create_cleanup "$name" "$ip" "$ssh_port" "$cpu" "$ram" "$disk" "$portmap" "$pass" "$vtype" "$exp_epoch" "$owner" "$plan" "$quota_bytes" "$normalized"
@@ -222,10 +226,12 @@ _vps_create_locked() {
   fi
   db_set_fields "$name" "23=0" "24=0" "20=0" "21=0" "22=$(date +%s)" || warn "VPS ${name} dan port telah dibuat, tetapi metadata traffic gagal diperbarui; jalankan sync/monitor dan jangan ulangi create."
 
+  penalty_reset "$name"
+  audit_log "$(audit_actor_cli)" "vps.create" "$name" "ok" "plan=${plan} type=${vtype} cpu=${cpu} ram=${ram}MB disk=${disk}GB ports=${nports} ip=${ip}"
   echo
   ok "VPS ${name} dibuat (${plan})."
   vps_info "$name"
-  info "Port aplikasi (${#alloc[@]} total termasuk SSH): ${alloc[*]:1} (otomatis kontigu)."
+  info "Port aplikasi (${#alloc[@]} total termasuk SSH): ${alloc[*]:1} (otomatis)."
 }
 
 vps_create() {
@@ -237,9 +243,11 @@ vps_list() {
   echo "------------------------------------------------------------------------------------------------"
   [[ ! -s "$DB_FILE" ]] && { echo "(kosong)"; return; }
   local name ip ssh cpu ram disk vt exp susp plan quota rx tx rate qs high pc pt prx ptx reason state bw
+  # Satu query LXD untuk semua VPS (v3.4.1); sebelumnya `lxc info` per baris.
+  vps_states_load
   while IFS='|' read -r name ip ssh cpu ram disk _ _ _ vt exp _ susp plan quota rx tx rate qs high pc pt prx ptx reason; do
     [[ -z "$name" ]] && continue
-    state=$(vps_state "$name"); [[ -z "$state" ]] && state="MISSING"
+    state=$(vps_state_fast "$name"); [[ -z "$state" ]] && state="MISSING"
     [[ "${susp:-0}" == "1" ]] && state="SUSPEND"
     quota=${quota:-0}; rx=${rx:-0}; tx=${tx:-0}; rate=${rate:-0}
     bw="$(bandwidth_fmt_bytes "$((rx + tx))")"
@@ -252,9 +260,14 @@ vps_list() {
 vps_info() {
   local name; name=$(pick_vps "${1:-}") || return 1
   local pubip ip ssh cpu ram disk ports pass created state vt exp owner susp plan quota rate reason
-  pubip=$(pub_ip); ip=$(db_field "$name" 2); ssh=$(db_field "$name" 3); cpu=$(db_field "$name" 4); ram=$(db_field "$name" 5); disk=$(db_field "$name" 6)
-  ports=$(db_field "$name" 7); pass=$(db_field "$name" 8); created=$(db_field "$name" 9); vt=$(vps_type "$name"); exp=$(db_field "$name" 11); owner=$(db_field "$name" 12); susp=$(db_field "$name" 13)
-  plan=$(plan_type "$name"); quota=$(db_field "$name" 15); rate=$(db_field "$name" 18); reason=$(db_field "$name" 25); state=$(vps_state "$name")
+  pubip=$(pub_ip)
+  # Satu pemindaian file untuk seluruh field (versi lama: 12 pemindaian terpisah).
+  db_row "$name" || { err "Record ${name} tidak ditemukan di database."; return 1; }
+  ip=${DB_ROW[1]}; ssh=${DB_ROW[2]}; cpu=${DB_ROW[3]}; ram=${DB_ROW[4]}; disk=${DB_ROW[5]}
+  ports=${DB_ROW[6]}; pass=${DB_ROW[7]}; created=${DB_ROW[8]}
+  vt=${DB_ROW[9]:-container}; exp=${DB_ROW[10]:-0}; owner=${DB_ROW[11]:--}; susp=${DB_ROW[12]:-0}
+  plan=${DB_ROW[13]:-shared}; quota=${DB_ROW[14]:-0}; rate=${DB_ROW[17]:-0}; reason=${DB_ROW[24]:--}
+  state=$(vps_state "$name")
   echo -e "${W}=== ${name} ===${N}"
   echo "Tipe layanan : ${plan}"
   echo "Backend      : ${vt}"
@@ -336,7 +349,7 @@ _vps_purge_body() {
     err "Firewall gagal direkonsiliasi setelah purge ${n}; reservasi dipulihkan."
     return 1
   fi
-  rm -f "${MONITOR_DIR}/${n}.state" 2>/dev/null || true
+  rm -f "${MONITOR_DIR}/${n}.state" "${MONITOR_DIR}/${n}.penalty" 2>/dev/null || true
   rm -f "${NOTIF_DIR}/${n}."* 2>/dev/null || true
   return 0
 }
@@ -389,6 +402,8 @@ _vps_resize_locked() {
     if (( rollback_failed )); then db_set_fields "$n" "13=1" "25=resize-rollback-failed" || true; apply_all_rules || true; err "Rollback tidak lengkap; ${n} disuspend dan wajib direkonsiliasi."; fi
     return 1
   fi
+  penalty_reset "$n"
+  audit_log "$(audit_actor_cli)" "vps.resize" "$n" "ok" "cpu=${ncpu} ram=${nram}MB disk=${ndisk}GB"
   if [[ "$vt" == "vm" ]]; then ok "Resource ${n} diperbarui. Restart VM bila guest OS belum melihat perubahan CPU/RAM."; else ok "Resource ${n} diperbarui (live)."; fi
 }
 
@@ -402,12 +417,14 @@ _vps_clone_locked() {
   local ip ssh cpu ram disk pass vt exp owner plan quota rate ports effective
   ip=$(next_ip) || { err "IP habis."; return 1; }; ssh=$(next_ssh_port) || { err "Port habis."; return 1; }
   cpu=$(db_field "$src" 4); ram=$(db_field "$src" 5); disk=$(db_field "$src" 6); pass=$(db_field "$src" 8); vt=$(vps_type "$src"); exp=$(db_field "$src" 11); owner=$(db_field "$src" 12); plan=$(plan_type "$src"); quota=$(db_field "$src" 15); rate=$(db_field "$src" 18); ports="tcp:${ssh}:22"
+  preflight_vps_copy "$src" "clone ${src}" || return 1
   if ! lxc copy "$src" "$new"; then
     err "Gagal clone."
     lxc info "$new" >/dev/null 2>&1 && _vps_create_cleanup "$new" "$ip" "$ssh" "$cpu" "$ram" "$disk" "$ports" "$pass" "$vt" "${exp:-0}" "${owner:--}" "${plan:-shared}" "${quota:-0}" "${rate:-0}"
     return 1
   fi
   set_static_ip "$new" "$ip" || { err "Gagal menerapkan IP clone."; _vps_create_cleanup "$new" "$ip" "$ssh" "$cpu" "$ram" "$disk" "$ports" "$pass" "$vt" "${exp:-0}" "${owner:--}" "${plan:-shared}" "${quota:-0}" "${rate:-0}"; return 1; }
+  vps_harden_apply "$new" "${plan:-shared}" "$vt" || warn "Hardening ${new} belum lengkap; ulangi dengan: vpsnat harden ${new}"
   effective=$(lxc config device get "$new" root size 2>/dev/null)
   if [[ ! "$effective" =~ ^${disk}([.]0+)?GB$ ]]; then err "Disk efektif clone tidak cocok dengan database (${effective:-unknown}); clone dibatalkan."; _vps_create_cleanup "$new" "$ip" "$ssh" "$cpu" "$ram" "$disk" "$ports" "$pass" "$vt" "${exp:-0}" "${owner:--}" "${plan:-shared}" "${quota:-0}" "${rate:-0}"; return 1; fi
   lxc start "$new" || { err "Gagal start clone."; _vps_create_cleanup "$new" "$ip" "$ssh" "$cpu" "$ram" "$disk" "$ports" "$pass" "$vt" "${exp:-0}" "${owner:--}" "${plan:-shared}" "${quota:-0}" "${rate:-0}"; return 1; }
@@ -428,6 +445,7 @@ _vps_clone_locked() {
     apply_all_rules || warn "Firewall rollback clone gagal; record dan port tetap dicadangkan."
     err "Firewall gagal setelah clone; clone ditahan sebagai suspended untuk rekonsiliasi."; return 1
   fi
+  audit_log "$(audit_actor_cli)" "vps.clone" "$new" "ok" "source=${src}"
   ok "Clone selesai."; vps_info "$new"
 }
 
@@ -444,7 +462,10 @@ _vps_set_plan_locked() {
   fi
   [[ "$plan" =~ ^(shared|dedicated)$ ]] || { err "Tipe harus shared atau dedicated."; return 1; }
   db_set_fields "$n" "14=$plan" "20=0" "21=0" "22=$(date +%s)" || { err "Gagal menyimpan tipe layanan ${n}."; return 1; }
+  penalty_reset "$n"
+  harden_apply_proc_limit "$n" "$plan" "$(vps_type "$n")" || warn "Limit proses ${n} belum diterapkan; ulangi dengan: vpsnat harden ${n}"
   # Mengubah plan tidak boleh menghapus alasan/status suspension yang sudah ada.
+  audit_log "$(audit_actor_cli)" "vps.set_type" "$n" "ok" "plan=${plan}"
   ok "${n}: tipe layanan ${plan}."
 }
 
@@ -485,12 +506,15 @@ _vps_reinstall_locked() {
     lxc config set "$n" security.secureboot false || { lxc delete "$n" --force 2>/dev/null || true; db_set_fields "$n" "13=1" "25=reinstall-failed" || true; apply_all_rules || true; return 1; }
   fi
   set_static_ip "$n" "$ip" || { lxc delete "$n" --force 2>/dev/null || true; db_set_fields "$n" "13=1" "25=reinstall-failed" || true; apply_all_rules || true; return 1; }
+  vps_harden_apply "$n" "${plan:-shared}" "$vt" || warn "Hardening ${n} belum lengkap; ulangi dengan: vpsnat harden ${n}"
   lxc start "$n" || { db_set_fields "$n" "13=1" "25=reinstall-failed" || true; apply_all_rules || true; err "Guest reinstall gagal start; VPS disuspend dan reservasi dipertahankan."; return 1; }
   wait_guest "$n" || { lxc stop "$n" --force 2>/dev/null || true; db_set_fields "$n" "13=1" "25=reinstall-failed" || true; apply_all_rules || true; err "Guest reinstall belum responsif; VPS disuspend."; return 1; }
   wait_ip "$n" "$ip" || { lxc stop "$n" --force 2>/dev/null || true; db_set_fields "$n" "13=1" "25=reinstall-failed" || true; apply_all_rules || true; err "IP guest reinstall belum terpasang; VPS disuspend."; return 1; }
   setup_guest "$n" "$pass" || { lxc stop "$n" --force 2>/dev/null || true; db_set_fields "$n" "13=1" "25=reinstall-failed" || true; apply_all_rules || true; err "Setup guest reinstall gagal; VPS disuspend."; return 1; }
   db_set_fields "$n" "8=$pass" "13=0" "14=${plan:-shared}" "15=${quota:-0}" "18=${rate:-0}" "20=0" "21=0" "22=$(date +%s)" "23=0" "24=0" "25=-" || { db_set_fields "$n" "13=1" "25=reinstall-failed" || true; apply_all_rules || true; err "Gagal menyimpan metadata reinstall; VPS disuspend."; return 1; }
+  penalty_reset "$n"
   bandwidth_apply_tc "$n" >/dev/null 2>&1 || warn "TC bandwidth reinstall belum diterapkan."
   apply_all_rules || { db_set_fields "$n" "13=1" "25=reinstall-failed" || true; err "Firewall reinstall gagal; VPS disuspend dan port tetap dicadangkan."; return 1; }
+  audit_log "$(audit_actor_cli)" "vps.reinstall" "$n" "ok" "image=${img_key}"
   ok "Reinstall ${n} selesai."; vps_info "$n"
 }

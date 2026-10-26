@@ -493,7 +493,7 @@ const API_DOC = [
   ]],
   ['Admin: sistem', [
     ['GET', '/api/admin/settings', 'Lihat setting aktif dan daftar key yang boleh diubah.', [], null, '{"ok":true,"settings":{"GRACE_DAYS":"3"},"keys":["grace","shared-suspend-minutes","…"]}', null],
-    ['POST', '/api/admin/settings', 'Ubah satu setting.', [['key', 'string', 'ya', 'grace | shared-suspend-minutes | shared-threshold | monitor-interval | bandwidth-default-quota | bandwidth-default-rate'], ['value', 'number', 'ya', '0-1000000']], '{"key":"grace","value":3}', OUT_JSON, null],
+    ['POST', '/api/admin/settings', 'Ubah satu setting.', [['key', 'string', 'ya', 'grace | shared-suspend-minutes | shared-threshold | monitor-interval | bandwidth-default-quota | bandwidth-default-rate | shared-cpu-tolerance | proc-limit-shared | proc-limit-dedicated | conn-limit | smtp-block'], ['value', 'number', 'ya', '0-1000000']], '{"key":"grace","value":3}', OUT_JSON, null],
     ['POST', '/api/admin/sync', 'Sinkronkan database dengan LXD. Guest tanpa record diimpor dalam keadaan suspend (sync-pending).', [], '{}', OUT_JSON, null],
     ['GET', '/api/admin/nodes', 'Dashboard multi-node (teks).', [], null, OUT_JSON, 'output berisi tabel teks yang sama dengan perintah vpsnat nodes.'],
     ['GET', '/api/admin/jobs', 'Daftar maksimal 30 job terbaru.', [], null, '{"ok":true,"jobs":[{"id":"a1b2c3d4e5f6","kind":"create","name":"demo","status":"done","rc":0,"output":"…","started":1790000000,"finished":1790000042}]}', null],

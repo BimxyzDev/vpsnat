@@ -15,6 +15,13 @@ RELAY_WG_PORT_DEFAULT=51820
 RELAY_NODES_FILE="${BASE_DIR}/relay-nodes.conf"   # label|node_ip|public_key|port_min|port_max
 RELAY_SLICE_SIZE="${RELAY_SLICE_SIZE:-5000}"      # jumlah port publik per node (default saat node-add)
 
+# MSS clamp (v3.4.0): MTU wg-vpsnat (1420) < MTU uplink (1500). Tanpa clamp, koneksi TCP besar dapat macet
+# bila ICMP "fragmentation needed" tertahan di jalur. Dipasang di relay DAN node. Tanpa `-w` agar tetap jalan
+# di iptables lama (CentOS 7, 1.4.x) karena baris ini dieksekusi wg-quick sebagai PostUp/PostDown.
+RELAY_MSS_MATCH='FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu'
+RELAY_MSS_UP="iptables -t mangle -C ${RELAY_MSS_MATCH} 2>/dev/null || iptables -t mangle -A ${RELAY_MSS_MATCH}"
+RELAY_MSS_DOWN="iptables -t mangle -D ${RELAY_MSS_MATCH} 2>/dev/null || true"
+
 relay_package_manager() {
   command -v apt-get >/dev/null 2>&1 && { echo apt; return; }
   command -v dnf >/dev/null 2>&1 && { echo dnf; return; }
@@ -106,6 +113,8 @@ relay_node_iptables() {
 relay_render_server_config() {
   local wg_port="$1" priv="$2" label ip pub a b line
   printf '[Interface]\nAddress = %s\nListenPort = %s\nPrivateKey = %s\n\n' "$RELAY_SERVER_ADDR" "$wg_port" "$priv"
+  echo "PostUp = ${RELAY_MSS_UP}"
+  echo "PostDown = ${RELAY_MSS_DOWN}"
   echo "PostUp = iptables -A FORWARD -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT"
   echo "PostUp = iptables -A INPUT -p udp --dport ${wg_port} -j ACCEPT"
   echo "PostDown = iptables -D FORWARD -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT"
@@ -134,6 +143,36 @@ relay_write_conf() {
 }
 
 relay_is_up() { systemctl is-active --quiet "wg-quick@${RELAY_WG_IF}.service"; }
+
+# Config WireGuard buatan versi <=3.3 belum memuat MSS clamp: sisipkan PostUp/PostDown setelah PrivateKey
+# (idempoten) supaya rule bertahan setelah reboot / restart tunnel.
+relay_mss_conf_patch() {
+  local tmp
+  [[ -f "$RELAY_WG_CONF" ]] || return 0
+  grep -q 'TCPMSS --clamp-mss-to-pmtu' "$RELAY_WG_CONF" && return 0
+  tmp="${RELAY_WG_CONF}.mss.$$"
+  ( umask 077
+    awk -v up="PostUp = ${RELAY_MSS_UP}" -v down="PostDown = ${RELAY_MSS_DOWN}" '
+      { print }
+      /^PrivateKey[[:space:]]*=/ && !done { print up; print down; done = 1 }
+    ' "$RELAY_WG_CONF" > "$tmp" ) && chmod 600 "$tmp" && mv -f "$tmp" "$RELAY_WG_CONF" || { rm -f "$tmp"; return 1; }
+}
+
+# Pasang rule MSS clamp pada kernel yang sedang berjalan (idempoten).
+relay_mss_apply() {
+  command -v iptables >/dev/null 2>&1 || return 0
+  # shellcheck disable=SC2086
+  iptables -w 5 -t mangle -C $RELAY_MSS_MATCH 2>/dev/null && return 0
+  iptables -t mangle -C $RELAY_MSS_MATCH 2>/dev/null && return 0
+  iptables -w 5 -t mangle -A $RELAY_MSS_MATCH 2>/dev/null || iptables -t mangle -A $RELAY_MSS_MATCH
+}
+
+# Dipanggil `vpsnat restore` (boot & upgrade): host relay/node lama otomatis mendapat MSS clamp.
+relay_mss_boot() {
+  [[ -f "$RELAY_WG_CONF" ]] || return 0
+  relay_mss_conf_patch || warn "Gagal menambahkan MSS clamp ke ${RELAY_WG_CONF}."
+  relay_mss_apply || warn "Gagal memasang rule MSS clamp (iptables mangle)."
+}
 
 # Pastikan relay sudah di-init dan memakai registry multi-node.
 relay_ready() {
@@ -363,6 +402,8 @@ relay_node_attach() {
 [Interface]
 Address = ${node_ip}/24
 PrivateKey = ${priv}
+PostUp = ${RELAY_MSS_UP}
+PostDown = ${RELAY_MSS_DOWN}
 
 [Peer]
 PublicKey = ${relay_pub}
@@ -468,9 +509,9 @@ relay_ctl() {
   need_root
   local action="${1:-status}"
   case "$action" in
-    on|start) systemctl enable --now "wg-quick@${RELAY_WG_IF}.service" && ok "WireGuard ${RELAY_WG_IF} ON." ;;
+    on|start) relay_mss_conf_patch || true; systemctl enable --now "wg-quick@${RELAY_WG_IF}.service" && { relay_mss_apply || true; ok "WireGuard ${RELAY_WG_IF} ON."; } ;;
     off|stop) systemctl disable --now "wg-quick@${RELAY_WG_IF}.service" && ok "WireGuard ${RELAY_WG_IF} OFF." ;;
-    restart) systemctl restart "wg-quick@${RELAY_WG_IF}.service" && ok "WireGuard ${RELAY_WG_IF} restarted." ;;
+    restart) relay_mss_conf_patch || true; systemctl restart "wg-quick@${RELAY_WG_IF}.service" && { relay_mss_apply || true; ok "WireGuard ${RELAY_WG_IF} restarted."; } ;;
     logs) journalctl -u "wg-quick@${RELAY_WG_IF}" -n 80 --no-pager ;;
     status)
       echo "NETWORK_MODE : $(conf_get NETWORK_MODE || echo direct)"

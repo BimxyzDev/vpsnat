@@ -10,7 +10,7 @@ snap_menu() {
     case "$c" in 1) act=create;;2) act=list;;3) act=restore;;4) act=delete;;*) return 0;;esac
   fi
   case "$act" in
-    create) [[ -z "$s" && "$NONINTERACTIVE" != "1" ]] && read -rp "Nama snapshot [snap-$(date +%m%d-%H%M)]: " s; s=${s:-snap-$(date +%m%d-%H%M)}; lxc snapshot "$n" "$s" && ok "Snapshot ${s} dibuat.";;
+    create) [[ -z "$s" && "$NONINTERACTIVE" != "1" ]] && read -rp "Nama snapshot [snap-$(date +%m%d-%H%M)]: " s; s=${s:-snap-$(date +%m%d-%H%M)}; preflight_vps_copy "$n" "snapshot ${n}" && lxc snapshot "$n" "$s" && ok "Snapshot ${s} dibuat.";;
     list) lxc info "$n" | sed -n '/^Snapshots:/,$p';;
     restore) [[ -z "$s" ]] && { lxc info "$n" | sed -n '/^Snapshots:/,$p'; read -rp "Nama snapshot: " s; }; confirm "Restore ${n} ke ${s}?" && lxc restore "$n" "$s" && ok "Restore selesai.";;
     delete) [[ -z "$s" ]] && { lxc info "$n" | sed -n '/^Snapshots:/,$p'; read -rp "Nama snapshot: " s; }; lxc delete "${n}/${s}" && ok "Snapshot dihapus.";;
@@ -22,6 +22,7 @@ vps_backup() {
   need_root
   local n; n=$(pick_vps "${1:-}") || return 1
   local dir="/var/backups/vpsnat" f; mkdir -p "$dir"; f="${dir}/${n}-$(date +%Y%m%d-%H%M%S).tar.gz"
+  preflight_backup "$n" "$dir" || return 1
   info "Export ${n} → ${f}"; lxc export "$n" "$f" --optimized-storage 2>/dev/null || lxc export "$n" "$f" || { err "Backup gagal."; return 1; }
   ok "Backup: ${f} ($(du -h "$f" | cut -f1))"
 }
@@ -32,6 +33,7 @@ vps_restore() {
   if [[ -z "$f" ]]; then ls -1 "$dir" 2>/dev/null || { err "Belum ada backup."; return 1; }; read -rp "Nama file backup: " f; fi
   [[ "$f" == */* || "$f" == *..* ]] && { err "Nama file tidak valid."; return 1; }
   [[ -f "${dir}/${f}" ]] || { err "File tidak ada."; return 1; }
+  preflight_restore "${dir}/${f}" || return 1
   lxc import "${dir}/${f}" && ok "Import selesai. Jalankan Sync DB untuk mendaftarkan."
 }
 

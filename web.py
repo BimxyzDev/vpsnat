@@ -26,7 +26,7 @@ import zlib
 from contextlib import contextmanager
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse, urlsplit
 
 SCRYPT = dict(n=2**14, r=8, p=1, dklen=32)
 
@@ -55,6 +55,7 @@ if __name__ == "__main__" and len(sys.argv) > 1 and sys.argv[1] == "hashpw":
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 CONF = os.environ.get("VPSNAT_WEB_CONF", "/etc/vpsnat/vpsnat.conf")
 DB = os.environ.get("VPSNAT_WEB_DB", "/etc/vpsnat/vps.db")
+AUDIT = os.environ.get("VPSNAT_WEB_AUDIT", "/etc/vpsnat/audit.log")
 CLI = os.environ.get("VPSNAT_WEB_CLI", "/usr/local/bin/vpsnat")
 LXC = (
     os.environ.get("VPSNAT_WEB_LXC")
@@ -66,6 +67,9 @@ MAX_BODY = 65536
 DUMMY_HASH = hash_password("dummy-password-for-timing")
 
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,30}$")
+# Nama yang boleh dipakai sebagai argumen CLI / segmen URL: tolak awalan '-' (option
+# injection) dan karakter path. Mencakup nama legacy berhuruf besar dan titik.
+SAFE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$")
 PASS_RE = re.compile(r"^[A-Za-z0-9@%^*_+=.,:;!?~-]{8,64}$")
 DUR_RE = re.compile(r"^([0-9]+[hdwm]|[0-9]{4}-[0-9]{2}-[0-9]{2}|never|0)$", re.ASCII)
 REL_DUR_RE = re.compile(r"^[0-9]+[hdwm]$", re.ASCII)
@@ -80,6 +84,11 @@ SETTING_KEYS = {
     "monitor-interval": "RESOURCE_SAMPLE_SECONDS",
     "bandwidth-default-quota": "BANDWIDTH_DEFAULT_QUOTA_GB",
     "bandwidth-default-rate": "BANDWIDTH_DEFAULT_RATE_MBIT",
+    "shared-cpu-tolerance": "SHARED_CPU_TOLERANCE",
+    "proc-limit-shared": "PROC_LIMIT_SHARED",
+    "proc-limit-dedicated": "PROC_LIMIT_DEDICATED",
+    "conn-limit": "CONN_LIMIT",
+    "smtp-block": "SMTP_BLOCK",
 }
 NUM_RE = re.compile(r"^\d+(\.\d+)?$")
 
@@ -125,6 +134,10 @@ COLS = (
 ).split()
 INTS = ("ssh", "cpu", "ram", "disk", "expires", "suspended", "quota", "rx", "tx", "quota_susp")
 
+# Cache hasil parse DB (v3.4.1). Invalidasi otomatis lewat mtime+size file.
+_db_cache = {"sig": None, "rows": []}
+_db_lock = threading.Lock()
+
 
 def to_int(v):
     """Strict integer parser for config/database fields; never truncates floats."""
@@ -141,6 +154,17 @@ def to_int(v):
 
 
 def read_db():
+    # Cache berbasis mtime+size (v3.4.1): versi lama mem-parse seluruh file pada SETIAP
+    # panggilan, dan satu request web memanggil get_row/read_db beberapa kali sehingga
+    # biayanya O(N) per request dan tumbuh linear terhadap jumlah VPS.
+    try:
+        st = os.stat(DB)
+        sig = (st.st_mtime_ns, st.st_size)
+    except OSError:
+        return []
+    with _db_lock:
+        if sig == _db_cache["sig"]:
+            return _db_cache["rows"]
     try:
         with open(DB, encoding="utf-8") as f:
             lines = f.read().splitlines()
@@ -164,6 +188,8 @@ def read_db():
         r["plan"] = r["plan"] or "shared"
         r["reason"] = r["reason"] or "-"
         rows.append(r)
+    with _db_lock:
+        _db_cache.update(sig=sig, rows=rows)
     return rows
 
 
@@ -178,7 +204,19 @@ def need_row(name):
     r = get_row(name)
     if not r:
         raise ApiError(404, "VPS tidak ditemukan.")
+    # v3.4.1: nama dari DB (mis. hasil `vpsnat sync` yang membaca nama guest LXD) dipakai
+    # sebagai argumen CLI dan segmen URL LXD. Tolak yang berbahaya: awalan '-' (option
+    # injection ke CLI) dan karakter path. Nama legacy berhuruf besar/titik tetap sah.
+    if not isinstance(r["name"], str) or not SAFE_NAME_RE.fullmatch(r["name"]):
+        raise ApiError(409, "Nama VPS di database tidak valid; perbaiki lewat CLI.")
     return r
+
+
+def safe_lxd_name(name):
+    """Nama aman untuk disisipkan ke URL LXD (validasi + encode segmen)."""
+    if not isinstance(name, str) or not SAFE_NAME_RE.fullmatch(name):
+        raise ApiError(404, "VPS tidak ditemukan.")
+    return quote(name, safe="")
 
 
 def pw_fp(password):
@@ -424,7 +462,11 @@ def fail(*keys):
     now = time.time()
     with _fail_lock:
         if len(_fails) > 10000:
-            _fails.clear()
+            # v3.4.1: buang entri paling lama, JANGAN reset seluruh counter.
+            # `clear()` lama bisa dipicu penyerang dengan membanjiri 10.000 key,
+            # lalu brute force berjalan lagi dengan hitungan kosong.
+            for stale in sorted(_fails, key=lambda k: _fails[k][-1])[:2000]:
+                _fails.pop(stale, None)
         for k in keys:
             _fails.setdefault(k, []).append(now)
 
@@ -656,6 +698,8 @@ def lxc_states():
 def invalidate_states():
     with _st_lock:
         _st["t"] = 0.0
+    with _rs_lock:
+        _rs.clear()
 
 
 def group_ports(raw, ssh):
@@ -712,21 +756,46 @@ def vps_view(r, states, admin=False, secret=False):
 _res_prev = {}
 _res_lock = threading.Lock()
 
+# Cache `lxc query .../state` per VPS (single-flight): puluhan poller UI memakai satu subprocess per RES_TTL.
+RES_TTL = 2.0
+_rs = {}            # name -> (monotonic, state_json, wallclock)
+_rs_lock = threading.Lock()
+_rs_flight = {}     # name -> Lock (satu query berjalan per VPS)
+
+
+def lxc_state_cached(name):
+    with _rs_lock:
+        hit = _rs.get(name)
+        if hit and time.monotonic() - hit[0] < RES_TTL:
+            return hit[1], hit[2]
+        flight = _rs_flight.setdefault(name, threading.Lock())
+    with flight:
+        with _rs_lock:
+            hit = _rs.get(name)
+            if hit and time.monotonic() - hit[0] < RES_TTL:
+                return hit[1], hit[2]
+        rc, out = run_proc([LXC, "query", f"/1.0/instances/{safe_lxd_name(name)}/state"], timeout=15)
+        try:
+            st = json.loads(out) if rc == 0 else {}
+        except ValueError:
+            st = {}
+        if not isinstance(st, dict):
+            st = {}
+        wall = time.time()
+        with _rs_lock:
+            _rs[name] = (time.monotonic(), st, wall)
+        return st, wall
+
 
 def resources(r):
     name = r["name"]
-    rc, out = run_proc([LXC, "query", f"/1.0/instances/{name}/state"], timeout=15)
-    try:
-        st = json.loads(out) if rc == 0 else {}
-    except ValueError:
-        st = {}
+    st, now = lxc_state_cached(name)
     status = str(st.get("status", "")).upper() or "UNKNOWN"
     running = status == "RUNNING"
     cpu_ns = to_int((st.get("cpu") or {}).get("usage")) if running else 0
     mem = to_int((st.get("memory") or {}).get("usage")) if running else 0
     root = ((st.get("disk") or {}).get("root") or {}).get("usage")
     eth = (((st.get("network") or {}).get("eth0") or {}).get("counters")) or {}
-    now = time.time()
     pct = None
     with _res_lock:
         prev = _res_prev.get(name)
@@ -1034,9 +1103,26 @@ def a_create(req):
     return 202, {"ok": True, "job": job["id"]}
 
 
+def audit(actor, action, target, result="ok", detail=""):
+    """Catat kejadian ke audit trail (v3.4.1). Best-effort: tidak pernah menggagalkan request."""
+    try:
+        with open(AUDIT, "a", encoding="utf-8") as f:
+            f.write(json.dumps({
+                "ts": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "actor": str(actor)[:120],
+                "action": str(action)[:60],
+                "target": str(target)[:120],
+                "result": str(result)[:20],
+                "detail": str(detail)[:400],
+            }, ensure_ascii=False) + "\n")
+    except OSError:
+        pass
+
+
 @route("DELETE", rf"/api/admin/vps/{NAME}", "admin")
 def a_delete(req, name):
     need_row(name)
+    audit(req.who, "vps.delete", name)
     job = spawn("delete", name, req.who, lambda: cli(["delete", name], yes=True, timeout=600), locks=(ALLOC,))
     return 202, {"ok": True, "job": job["id"]}
 
@@ -1045,18 +1131,22 @@ def a_delete(req, name):
 def a_action(req, name):
     need_row(name)
     act = v_choice(req.body.get("action"), ("start", "stop", "restart", "suspend", "unsuspend"), "action")
+    audit(req.who, f"vps.{act}", name)
     return power_action(name, act)
 
 
 @route("POST", rf"/api/admin/vps/{NAME}/reinstall", "admin")
 def a_reinstall(req, name):
     need_row(name)
-    return do_reinstall(req, name, v_choice(req.body.get("image", "ubuntu22"), IMAGES, "image"))
+    image = v_choice(req.body.get("image", "ubuntu22"), IMAGES, "image")
+    audit(req.who, "vps.reinstall", name, detail=f"image={image}")
+    return do_reinstall(req, name, image)
 
 
 @route("POST", rf"/api/admin/vps/{NAME}/passwd", "admin")
 def a_passwd(req, name):
     need_row(name)
+    audit(req.who, "vps.passwd", name)
     return change_password(name, v_pass(req.body.get("password")))
 
 
@@ -1070,6 +1160,7 @@ def a_resize(req, name):
         "DISK": v_int(b, "disk", r["disk"], r["disk"], 10000),
     }
     ensure_idle(name)
+    audit(req.who, "vps.resize", name, detail=f"cpu={env['CPU']} ram={env['RAM']} disk={env['DISK']}")
     with held(name):
         rc, out = cli(["resize", name], env)
     return result(rc, out)
@@ -1079,6 +1170,7 @@ def a_resize(req, name):
 def a_renew(req, name):
     need_row(name)
     dur = v_dur(req.body.get("duration"), relative=True)
+    audit(req.who, "vps.renew", name, detail=f"duration={dur}")
     ensure_idle(name)
     with held(name):
         rc, out = cli(["renew", name, dur])
@@ -1099,6 +1191,7 @@ def a_expire(req, name):
 @route("POST", rf"/api/admin/vps/{NAME}/owner", "admin")
 def a_owner(req, name):
     need_row(name)
+    audit(req.who, "vps.set_owner", name)
     owner = v_owner(req.body.get("owner"))
     with held(name):
         rc, out = cli(["set-owner", name, owner])
@@ -1108,6 +1201,7 @@ def a_owner(req, name):
 @route("POST", rf"/api/admin/vps/{NAME}/plan", "admin")
 def a_plan(req, name):
     need_row(name)
+    audit(req.who, "vps.set_type", name)
     plan = v_choice(req.body.get("plan"), ("shared", "dedicated"), "plan")
     with held(name):
         rc, out = cli(["set-type", name, plan])
@@ -1392,6 +1486,30 @@ class Handler(BaseHTTPRequestHandler):
         m = c.get(COOKIE)
         return m.value if m else None
 
+    def origin_ok(self):
+        """True bila Origin/Referer cocok dengan Host panel (proteksi CSRF lapis kedua).
+
+        Browser selalu mengirim Origin pada request lintas-origin; membandingkannya dengan
+        header Host memblokir situs lain yang memaksa POST dengan cookie sesi. Klien
+        non-browser (curl, skrip) biasanya tidak mengirim keduanya dan tetap dilayani
+        selama X-Requested-With benar.
+        """
+        raw = (self.headers.get("Origin") or "").strip()
+        if not raw:
+            raw = (self.headers.get("Referer") or "").strip()
+            if not raw:
+                return True
+        if raw == "null":
+            return False
+        host = (self.headers.get("Host") or "").strip().lower()
+        if not host:
+            return False
+        try:
+            parts = urlsplit(raw)
+        except ValueError:
+            return False
+        return bool(parts.netloc) and parts.netloc.lower() == host
+
     def authenticate(self, ip):
         authz = self.headers.get("Authorization", "")
         if authz.startswith("Bearer "):
@@ -1553,6 +1671,10 @@ class Handler(BaseHTTPRequestHandler):
             if method != "GET" and (not auth or auth.get("via") == "cookie"):
                 if self.headers.get("X-Requested-With") != "vpsnat":
                     raise ApiError(403, "Header X-Requested-With wajib.")
+                # v3.4.1: header X-Requested-With saja tidak cukup — request lintas-origin
+                # dapat mengirimnya. Untuk auth berbasis cookie, tolak Origin/Referer asing.
+                if auth and not self.origin_ok():
+                    raise ApiError(403, "Origin tidak diizinkan untuk permintaan ini.")
             if role and (not auth or auth["role"] != role):
                 raise ApiError(401 if not auth else 403, "Tidak diizinkan.")
             req = Req(self, body, auth, ip)

@@ -157,7 +157,19 @@ cmd_upgrade() {
   # No-op if invoked from the installed tree; do not restore a stale .previous.
   [[ -d "$INSTALL_DIR" && "$source_real" != "$install_real" ]] && rollback_on_fail=1
   ensure_runtime_dirs || { err "Gagal menyiapkan direktori runtime."; return 1; }
-  db_init || { err "Migrasi database gagal; upgrade dibatalkan."; return 1; }
+  # Backup DB SEBELUM migrasi pertama oleh kode baru. Dipakai untuk memulihkan DB bila migrasi merusaknya.
+  local db_backup="" rows_before=0
+  if [[ -s "$DB_FILE" ]]; then
+    rows_before=$(db_rows_count "$DB_FILE")
+    db_backup=$(db_backup_snapshot pre-upgrade "v${VERSION}") || { err "Backup DB sebelum upgrade gagal; upgrade dibatalkan."; return 1; }
+    [[ -n "$db_backup" ]] && info "Backup DB: ${db_backup}"
+  fi
+  db_init || { err "Migrasi database gagal; upgrade dibatalkan (backup DB: ${db_backup:--})."; return 1; }
+  if [[ -n "$db_backup" ]] && { [[ "$(db_rows_count "$DB_FILE")" != "$rows_before" ]] || ! db_verify_file "$DB_FILE"; }; then
+    err "Verifikasi DB pasca-migrasi gagal (record sebelum=${rows_before}, sesudah=$(db_rows_count "$DB_FILE")); memulihkan dari ${db_backup}."
+    with_lock cp -p "$db_backup" "$DB_FILE" || err "GAGAL memulihkan DB otomatis; salin manual ${db_backup} -> ${DB_FILE}."
+    return 1
+  fi
   set_default_config || { err "Gagal memeriksa konfigurasi default."; return 1; }
   install_runtime_tree || { err "Pemasangan runtime gagal; upgrade dibatalkan."; return 1; }
   write_systemd_services || { (( rollback_on_fail )) && _upgrade_restore_previous_runtime || true; err "Gagal menulis unit systemd."; return 1; }
@@ -176,6 +188,8 @@ cmd_upgrade() {
   bandwidth_sync_all || { (( rollback_on_fail )) && _upgrade_restore_previous_runtime || true; err "Sync bandwidth gagal."; return 1; }
   apply_all_rules || { (( rollback_on_fail )) && _upgrade_restore_previous_runtime || true; err "Rekonsiliasi firewall gagal; periksa log sebelum menyatakan upgrade selesai."; return 1; }
   ok "Upgrade ke v${VERSION} selesai. DB lama dimigrasikan ke schema ${DB_FIELDS} field."
+  [[ -n "$db_backup" ]] && info "Backup DB pra-upgrade: ${db_backup}"
+  info "Hardening VPS lama (limit proses + anti-spoofing NIC): vpsnat harden --check, lalu vpsnat harden all"
 }
 
 cmd_uninstall() {

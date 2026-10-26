@@ -1,40 +1,106 @@
 #!/usr/bin/env bash
 
+# Run port kosong pada [SSH_BASE..PORT_MAX], satu "awal akhir" per baris. Satu kali baca DB + ss
+# (versi lama memanggil awk+ss untuk SETIAP port => puluhan ribu fork per alokasi).
+port_free_runs() {
+  {
+    [[ -s "$DB_FILE" ]] && awk -F'|' '
+      $3 ~ /^[0-9]+$/ { print $3 + 0 }
+      { n = split($7, e, ","); for (i = 1; i <= n; i++) { split(e[i], a, ":"); if (a[2] ~ /^[0-9]+$/) print a[2] + 0 } }
+    ' "$DB_FILE" 2>/dev/null
+    ss -H -lntu 2>/dev/null | awk '{a = $5; sub(/^.*:/, "", a); if (a ~ /^[0-9]+$/) print a + 0}'
+  } | awk -v lo="$SSH_BASE" -v hi="$PORT_MAX" '
+    { used[$1 + 0] = 1 }
+    END {
+      run = 0
+      for (p = lo; p <= hi; p++) {
+        if (p in used) { if (run) { print start, p - 1; run = 0 } }
+        else if (!run) { start = p; run = 1 }
+      }
+      if (run) print start, hi
+    }'
+}
+
+# Satu blok kontigu pertama (first-fit) yang muat <need> port: "awal akhir".
 alloc_contiguous_ports() {
-  local need="$1" p start=0 run=0
+  local need="$1" s e
   [[ "$need" =~ ^[0-9]+$ ]] || return 1
   (( need >= 1 )) || return 1
-  for p in $(seq "$SSH_BASE" "$PORT_MAX"); do
-    if port_used "$p"; then
-      run=0
-      start=0
-      continue
-    fi
-    (( run == 0 )) && start="$p"
-    (( run += 1 ))
-    if (( run >= need )); then
-      echo "${start} $((start + need - 1))"
+  while read -r s e; do
+    [[ -n "$s" ]] || continue
+    if (( e - s + 1 >= need )); then
+      echo "${s} $((s + need - 1))"
       return 0
     fi
-  done
+  done < <(port_free_runs)
   return 1
 }
 
+# Alokasi multi-blok (greedy best-fit) saat tidak ada satu blok kontigu yang cukup:
+# ambil run terbesar penuh, blok terakhir memakai run terkecil yang masih muat.
+# Keluaran satu port per baris (urut blok naik). Gagal bila butuh lebih dari <max_chunks> blok.
+alloc_port_chunks() {
+  local need="$1" max_chunks="${2:-$PORT_SPLIT_MAX_CHUNKS_DEFAULT}"
+  [[ "$need" =~ ^[0-9]+$ && "$max_chunks" =~ ^[0-9]+$ ]] || return 1
+  (( need >= 1 && max_chunks >= 1 )) || return 1
+  port_free_runs | awk -v need="$need" -v maxc="$max_chunks" '
+    { n++; s[n] = $1; l[n] = $2 - $1 + 1; used[n] = 0 }
+    END {
+      rem = need; k = 0
+      while (rem > 0 && k < maxc) {
+        best = 0; big = 0
+        for (i = 1; i <= n; i++) {
+          if (used[i]) continue
+          if (l[i] >= rem && (best == 0 || l[i] < l[best])) best = i
+          if (big == 0 || l[i] > l[big]) big = i
+        }
+        if (best) { take = rem; pick = best } else if (big) { take = l[big]; pick = big } else break
+        used[pick] = 1; k++; cs[k] = s[pick]; cl[k] = take; rem -= take
+      }
+      if (rem > 0) exit 1
+      for (i = 2; i <= k; i++) {
+        ts = cs[i]; tl = cl[i]; j = i - 1
+        while (j >= 1 && cs[j] > ts) { cs[j + 1] = cs[j]; cl[j + 1] = cl[j]; j-- }
+        cs[j + 1] = ts; cl[j + 1] = tl
+      }
+      for (i = 1; i <= k; i++) for (p = 0; p < cl[i]; p++) print cs[i] + p
+    }'
+}
+
+# Kontigu bila bisa; kalau tidak, pecah ke maksimal PORT_SPLIT_MAX_CHUNKS blok.
+# Keluaran: satu port per baris.
 alloc_ports() {
-  local need="$1" range start end
-  range=$(alloc_contiguous_ports "$need") || return 1
-  read -r start end <<< "$range"
-  seq "$start" "$end"
+  local need="$1" range start end chunks
+  if range=$(alloc_contiguous_ports "$need"); then
+    read -r start end <<< "$range"
+    seq "$start" "$end"
+    return 0
+  fi
+  chunks=$(cfg_int PORT_SPLIT_MAX_CHUNKS "$PORT_SPLIT_MAX_CHUNKS_DEFAULT")
+  (( chunks > 1 )) || return 1
+  alloc_port_chunks "$need" "$chunks"
+}
+
+# Ringkas daftar port menjadi rentang: 20010 20011 20012 30000 -> 20010-20012,30000
+port_ranges_label() {
+  printf '%s\n' "$@" | awk '
+    NR == 1 { s = p = $1; next }
+    $1 == p + 1 { p = $1; next }
+    { printf "%s%s", (o++ ? "," : ""), (s == p ? s : s "-" p); s = p = $1 }
+    END { printf "%s%s\n", (o++ ? "," : ""), (s == p ? s : s "-" p) }'
 }
 
 next_ip() {
-  local used i
-  used=$(cut -d'|' -f2 "$DB_FILE" 2>/dev/null)
+  # Satu pass awk + lookup array; versi lama menjalankan `grep` untuk setiap kandidat
+  # (sampai 249 fork per alokasi).
+  local i cand
+  local -A used=()
+  while IFS= read -r i; do
+    [[ -n "$i" ]] && used["$i"]=1
+  done < <(awk -F'|' 'NF && $2 != "" { print $2 }' "$DB_FILE" 2>/dev/null)
   for i in $(seq 2 250); do
-    if ! grep -Fqx "${NET_PREFIX}.${i}" <<<"$used"; then
-      echo "${NET_PREFIX}.${i}"
-      return 0
-    fi
+    cand="${NET_PREFIX}.${i}"
+    [[ -n "${used[$cand]:-}" ]] || { echo "$cand"; return 0; }
   done
   return 1
 }
@@ -228,12 +294,58 @@ _fw_chain_ready() {
   ipt -t "$table" -N "$chain" 2>/dev/null || ipt -t "$table" -S "$chain" >/dev/null 2>&1
 }
 
+# Probe dukungan modul iptables pada kernel ini (rule uji dipasang lalu dihapus di chain staging).
+_fw_match_supported() {
+  local chain="$1"; shift
+  ipt -A "$chain" "$@" -j RETURN >/dev/null 2>&1 || return 1
+  ipt -D "$chain" "$@" -j RETURN >/dev/null 2>&1 || true
+  return 0
+}
+
+# Guard per-VPS (v3.4.0), dievaluasi SETELAH ESTABLISHED,RELATED sehingga hanya koneksi baru yang diperiksa:
+#   * blokir SMTP outbound (default 25,465,587) -> cegah VPS jadi sumber spam
+#   * batasi koneksi baru concurrent per VPS (conntrack) -> satu VPS tak bisa menghabiskan tabel conntrack host
+# Modul kernel yang tidak ada (xt_connlimit / xt_multiport) hanya melewati guard terkait, tidak menggagalkan firewall.
+_fw_guard_rules() {
+  local stage="$1" climit="$2" sblock="$3" sports="$4" ip do_conn=0 do_smtp=0
+  shift 4
+  (( $# > 0 )) || return 0
+  if (( climit > 0 )); then
+    if _fw_match_supported "$stage" -m connlimit --connlimit-above 1 --connlimit-mask 32; then
+      do_conn=1
+    else
+      warn "Kernel tanpa xt_connlimit: batas koneksi per VPS dilewati."
+    fi
+  fi
+  if (( sblock )) && [[ -n "$sports" ]]; then
+    if _fw_match_supported "$stage" -p tcp -m multiport --dports "$sports"; then
+      do_smtp=1
+    else
+      warn "Kernel tanpa xt_multiport: blokir SMTP outbound dilewati."
+    fi
+  fi
+  for ip in "$@"; do
+    if (( do_smtp )); then
+      ipt -A "$stage" -s "$ip" -p tcp -m multiport --dports "$sports" -j REJECT --reject-with tcp-reset || return 1
+    fi
+    if (( do_conn )); then
+      ipt -A "$stage" -s "$ip" -m conntrack --ctstate NEW -m connlimit --connlimit-above "$climit" --connlimit-mask 32 -j REJECT || return 1
+    fi
+  done
+}
+
 _fw_build_rules_locked() {
   local pre_stage="$1" fwd_stage="$2"
   local name ip ssh cpu ram disk ports pass created backend expires owner suspended plan quota rx tx rate quota_susp high_since cpu_prev sample_ts bw_prev_rx bw_prev_tx reason
   local e proto rest ext int p key
   local -a entries
   local -A seen_public=()
+  local conn_limit smtp_block smtp_ports
+  local -a guard_ips=()
+  conn_limit=$(cfg_int CONN_LIMIT "$CONN_LIMIT_DEFAULT")
+  smtp_block=$(cfg_int SMTP_BLOCK "$SMTP_BLOCK_DEFAULT")
+  smtp_ports=$(conf_get SMTP_BLOCK_PORTS); smtp_ports="${smtp_ports:-$SMTP_BLOCK_PORTS_DEFAULT}"
+  [[ "$smtp_ports" =~ ^[0-9]{1,5}(,[0-9]{1,5}){0,14}$ ]] || smtp_ports="$SMTP_BLOCK_PORTS_DEFAULT"
 
   _fw_chain_ready nat "$pre_stage" || { err "Gagal menyiapkan staging chain $pre_stage."; return 1; }
   _fw_chain_ready filter "$fwd_stage" || { err "Gagal menyiapkan staging chain $fwd_stage."; return 1; }
@@ -250,6 +362,7 @@ _fw_build_rules_locked() {
     fi
     local active=1
     [[ "${suspended:-0}" == 1 || "${quota_susp:-0}" == 1 ]] && active=0
+    (( active )) && guard_ips+=("$ip")
     [[ -z "$ports" || "$ports" == "-" ]] && continue
     IFS=',' read -r -a entries <<< "$ports"
     for e in "${entries[@]}"; do
@@ -276,6 +389,9 @@ _fw_build_rules_locked() {
   done < "$DB_FILE"
 
   ipt -A "$fwd_stage" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT || return 1
+  _fw_guard_rules "$fwd_stage" "$conn_limit" "$smtp_block" "$smtp_ports" "${guard_ips[@]}" || {
+    err "Gagal menyiapkan guard SMTP/conn-limit; firewall lama dipertahankan."; return 1
+  }
   ipt -A "$fwd_stage" -i "$BRIDGE" -j ACCEPT || return 1
   ipt -A "$fwd_stage" -o "$BRIDGE" -j ACCEPT || return 1
 }
@@ -336,13 +452,15 @@ set_static_ip() {
 }
 
 next_ssh_port() {
-  local p
-  for p in $(seq "$SSH_BASE" "$PORT_MAX"); do
-    if ! port_used "$p"; then
-      echo "$p"
-      return 0
-    fi
-  done
+  # Versi lama memindai SSH_BASE..PORT_MAX dan memanggil `port_used` (awk seluruh DB +
+  # `ss -lntu`) untuk SETIAP port: hingga puluhan ribu subprocess per alokasi.
+  # port_free_runs sudah memuat DB+ss sekali dan mengembalikan rentang port kosong.
+  local s e
+  while read -r s e; do
+    [[ -n "$s" ]] || continue
+    echo "$s"
+    return 0
+  done < <(port_free_runs)
   return 1
 }
 

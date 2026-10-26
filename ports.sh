@@ -26,18 +26,28 @@ _port_add_locked() {
   [[ "$count" =~ ^[0-9]{1,3}$ ]] || { err "Jumlah port harus integer 1-500."; return 1; }
   count=$((10#$count))
   (( count >= 1 && count <= 500 )) || { err "Jumlah port harus 1-500."; return 1; }
-  range=$(alloc_contiguous_ports "$count") || { err "Tidak ditemukan range kontigu ${count} port yang kosong."; return 1; }
-  read -r start end <<< "$range"
+  local ports_out explicit_int=0
+  local -a plist
+  [[ -n "${int_start:-}" ]] && explicit_int=1
+  ports_out=$(alloc_ports "$count") || {
+    err "Tidak ditemukan ${count} port kosong (maksimal $(cfg_int PORT_SPLIT_MAX_CHUNKS "$PORT_SPLIT_MAX_CHUNKS_DEFAULT") blok kontigu)."
+    return 1
+  }
+  mapfile -t plist <<< "$ports_out"
+  (( ${#plist[@]} == count )) || { err "Alokasi port tidak lengkap (${#plist[@]}/${count})."; return 1; }
   ip=$(db_field "$n" 2)
-  int_start=${int_start:-$start}
-  [[ "$int_start" =~ ^[0-9]{1,5}$ ]] || { err "INT_START invalid."; return 1; }
-  int_start=$((10#$int_start))
-  (( int_start >= 1 && int_start + count - 1 <= 65535 )) || { err "INT_START harus berada pada rentang 1-65535."; return 1; }
+  if (( explicit_int )); then
+    [[ "$int_start" =~ ^[0-9]{1,5}$ ]] || { err "INT_START invalid."; return 1; }
+    int_start=$((10#$int_start))
+    (( int_start >= 1 && int_start + count - 1 <= 65535 )) || { err "INT_START harus berada pada rentang 1-65535."; return 1; }
+  fi
 
   local original newports entry
   original=$(ports_get "$n"); newports="$original"
-  for p in $(seq "$start" "$end"); do
-    i=$((p-start)); local int=$((int_start+i))
+  for i in "${!plist[@]}"; do
+    p=${plist[$i]}
+    local int=$p
+    (( explicit_int )) && int=$((int_start+i))
     if [[ "$proto" == "both" ]]; then
       entry="tcp:${p}:${int}"; [[ "$newports" == "-" || -z "$newports" ]] && newports="$entry" || newports+=",$entry"
       entry="udp:${p}:${int}"; newports+=",$entry"
@@ -53,7 +63,8 @@ _port_add_locked() {
     err "Penambahan port dibatalkan karena firewall gagal diterapkan."
     return 1
   fi
-  ok "${added} port ditambahkan: ${start}-${end} → ${n}"
+  audit_log "$(audit_actor_cli)" "port.add" "$n" "ok" "proto=${proto} count=${added} ports=$(port_ranges_label "${plist[@]}")"
+  ok "${added} port ditambahkan: $(port_ranges_label "${plist[@]}") → ${n}"
 }
 
 port_add() { with_alloc_lock _port_add_locked "$@"; }
@@ -83,6 +94,7 @@ _port_del_locked() {
     err "Penghapusan port dibatalkan karena firewall gagal diterapkan."
     return 1
   fi
+  audit_log "$(audit_actor_cli)" "port.del" "$n" "ok" "public=${ext}"
   ok "Port ${ext} dihapus."
 }
 

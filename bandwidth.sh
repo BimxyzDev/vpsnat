@@ -4,6 +4,11 @@ bandwidth_unit_bytes() { echo 1000000000; }
 
 bandwidth_host_iface() {
   local name="$1" iface
+  # Jalur cepat: host interface sudah dimuat massal (satu panggilan LXD per siklus).
+  if [[ -n "${LXD_BULK_LOADED:-}" && -n "${LXD_HOST_IF[$name]:-}" ]]; then
+    printf '%s\n' "${LXD_HOST_IF[$name]}"
+    return 0
+  fi
   iface=$(lxc config device get "$name" eth0 host_name 2>/dev/null || true)
   if [[ -n "$iface" && -e "/sys/class/net/$iface" ]]; then
     echo "$iface"
@@ -115,6 +120,7 @@ bandwidth_set() {
     if (( used >= quota_bytes )); then db_set_field "$n" 19 1; else db_set_field "$n" 19 0; fi
   fi
   apply_all_rules
+  audit_log "$(audit_actor_cli)" "bandwidth.set" "$n" "ok" "quota_gb=${quota} rate_mbps=${normalized}"
   ok "Bandwidth ${n}: quota ${quota} GB, limit ${normalized} Mbps."
 }
 
@@ -131,36 +137,45 @@ bandwidth_reset() {
   fi
   db_set_fields "$n" "16=0" "17=0" "19=0" "23=${rx:-0}" "24=${tx:-0}"
   apply_all_rules
+  audit_log "$(audit_actor_cli)" "bandwidth.reset" "$n" "ok"
   ok "Kuota bandwidth ${n} di-reset."
 }
 
 bandwidth_update_usage() {
-  local name="$1" iface counters rx tx prev_rx prev_tx delta_rx delta_tx old_exhausted quota used was_exhausted=0
+  local name="$1" iface counters rx tx prev_rx prev_tx delta_rx delta_tx old_exhausted quota used used_rx used_tx _u16 _u17 was_exhausted=0
   iface=$(bandwidth_host_iface "$name")
   [[ -z "$iface" ]] && return 0
   counters=$(bandwidth_counters "$iface" 2>/dev/null || true)
   [[ -z "$counters" ]] && return 0
   read -r rx tx <<< "$counters"
-  prev_rx=$(db_field "$name" 23); prev_tx=$(db_field "$name" 24)
+  db_field_var prev_rx "$name" 23; db_field_var prev_tx "$name" 24
   prev_rx=${prev_rx:-0}; prev_tx=${prev_tx:-0}
 
   if (( rx < prev_rx )); then prev_rx=0; fi
   if (( tx < prev_tx )); then prev_tx=0; fi
   delta_rx=$((rx - prev_rx)); delta_tx=$((tx - prev_tx))
 
-  db_set_fields "$name" \
-    "16=$(( $(db_field "$name" 16) + delta_rx ))" \
-    "17=$(( $(db_field "$name" 17) + delta_tx ))" \
-    "23=$rx" "24=$tx"
+  # Nilai baru dihitung lokal: menghindari dua pembacaan ulang file dan menjaga
+  # akurasi saat penulisan ditunda (mode batch).
+  db_field_var _u16 "$name" 16; db_field_var _u17 "$name" 17
+  used_rx=$(( ${_u16:-0} + delta_rx ))
+  used_tx=$(( ${_u17:-0} + delta_tx ))
+  db_metric_write "$name" "16=$used_rx" "17=$used_tx" "23=$rx" "24=$tx"
 
-  quota=$(db_field "$name" 15); quota=${quota:-0}
-  old_exhausted=$(db_field "$name" 19); old_exhausted=${old_exhausted:-0}
-  used=$(bandwidth_used_bytes "$name")
+  db_field_var quota "$name" 15; quota=${quota:-0}
+  db_field_var old_exhausted "$name" 19; old_exhausted=${old_exhausted:-0}
+  used=$((used_rx + used_tx))
   if (( quota > 0 && used >= quota )); then
-    db_set_field "$name" 19 1
-    (( old_exhausted == 1 )) || { apply_all_rules; tg_notify "🚫 VPS ${name} mencapai kuota bandwidth ($(bandwidth_fmt_bytes "$used")) dan network diblokir. Reset: vpsnat bandwidth ${name} reset"; }
+    db_metric_write "$name" "19=1"
+    (( old_exhausted == 1 )) || {
+      # Flush agar apply_all_rules membaca status kuota terbaru dari file.
+      db_batch_commit || true
+      apply_all_rules
+      tg_notify "🚫 VPS ${name} mencapai kuota bandwidth ($(bandwidth_fmt_bytes "$used")) dan network diblokir. Reset: vpsnat bandwidth ${name} reset"
+    }
   elif (( quota == 0 || used < quota )) && (( old_exhausted == 1 )); then
-    db_set_field "$name" 19 0
+    db_metric_write "$name" "19=0"
+    db_batch_commit || true
     apply_all_rules
   fi
 }
@@ -200,11 +215,30 @@ vps_bandwidth() { with_alloc_lock _vps_bandwidth_locked "$@"; }
 
 
 bandwidth_check_all() {
-  local name ip ssh cpu ram disk ports pass created backend exp owner susp plan quota rx tx rate qstate high prevcpu prevts prevrx prevtx reason
+  local name ip ssh cpu ram disk ports pass created backend exp owner susp plan quota rx tx rate qstate high prevcpu prevts prevrx prevtx reason _st
+  local _own=0
+  # Bila belum dipanggil dari resource_check (mode batch sudah aktif), kelola sendiri:
+  # satu pemuatan DB, satu penulisan, satu query status LXD untuk semua VPS.
+  if [[ -z "${BATCH_DEFER:-}" ]]; then
+    db_cache_load || true
+    vps_states_load || true
+    conf_cache_load
+    CYCLE_NOW=$(date +%s)
+    BATCH_DEFER=1
+    db_batch_begin
+    _own=1
+  fi
   while IFS='|' read -r name ip ssh cpu ram disk ports pass created backend exp owner susp plan quota rx tx rate qstate high prevcpu prevts prevrx prevtx reason; do
     [[ -z "$name" ]] && continue
     [[ "${plan:-shared}" == "shared" || "${plan:-shared}" == "dedicated" ]] || continue
-    [[ "$(vps_state "$name")" == "RUNNING" ]] || continue
+    vps_state_var _st "$name"
+    [[ "$_st" == "RUNNING" ]] || continue
     bandwidth_update_usage "$name"
   done < "$DB_FILE"
+  if (( _own )); then
+    db_batch_commit || log "Batch commit siklus bandwidth gagal."
+    BATCH_DEFER=""
+    db_cache_clear
+    conf_cache_clear
+  fi
 }

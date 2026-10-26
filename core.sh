@@ -2,7 +2,7 @@
 
 set -uo pipefail
 
-VERSION="3.3.0"
+VERSION="3.4.1"
 APP_NAME="vpsnat"
 BASE_DIR="${VPSNAT_BASE_DIR:-/etc/vpsnat}"
 DB_FILE="${BASE_DIR}/vps.db"
@@ -44,6 +44,27 @@ RESOURCE_THRESHOLD_DEFAULT=100
 BANDWIDTH_DEFAULT_RATE_MBIT=0
 BANDWIDTH_DEFAULT_QUOTA_GB=0
 NETWORK_MODE_DEFAULT="direct"
+
+# --- v3.4.0 hardening: semua default bisa di-override lewat vpsnat.conf / `vpsnat settings set` ---
+PROC_LIMIT_SHARED_DEFAULT=512          # limits.processes per container shared (0 = tanpa batas)
+PROC_LIMIT_DEDICATED_DEFAULT=2048      # limits.processes per container dedicated
+ANTISPOOF_DEFAULT=1                    # security.mac/ipv4/ipv6_filtering pada NIC VPS
+CONN_LIMIT_DEFAULT=1024                # koneksi baru concurrent per VPS (conntrack); 0 = nonaktif
+SMTP_BLOCK_DEFAULT=1                   # blokir SMTP outbound dari VPS
+SMTP_BLOCK_PORTS_DEFAULT="25,465,587"
+SHARED_CPU_TOLERANCE_DEFAULT=2         # poin persen untuk threshold CPU (rata-rata sampling praktis tak pernah tepat 100%)
+PENALTY_DECAY_PERCENT_DEFAULT=25       # leaky bucket: 4 detik normal menghapus 1 detik beban
+MONITOR_LOCK_TIMEOUT_DEFAULT=20        # monitor tidak menunggu lock alokasi lebih lama dari ini (detik)
+PREFLIGHT_DEFAULT=1
+PREFLIGHT_BUFFER_GB_DEFAULT=2
+PREFLIGHT_CREATE_GB_DEFAULT=3
+PORT_SPLIT_MAX_CHUNKS_DEFAULT=3        # 1 = alokasi port wajib satu blok kontigu
+DB_BACKUP_DIR="${BASE_DIR}/backups"
+DB_BACKUP_KEEP_DEFAULT=5
+# Audit trail (v3.4.1)
+AUDIT_FILE="${AUDIT_FILE:-${BASE_DIR}/audit.log}"
+AUDIT_LOG_DEFAULT=1
+AUDIT_MAX_BYTES_DEFAULT=10485760
 
 NONINTERACTIVE="${VPSNAT_NONINTERACTIVE:-0}"
 
@@ -136,8 +157,40 @@ with_fw_lock() {
 }
 
 conf_get() {
+  # Cache konfigurasi (v3.4.1): hot path monitor memanggil cfg_int belasan kali per VPS,
+  # dan tiap panggilan lama men-spawn `grep | tail | cut` (4 proses). Dengan N VPS itu
+  # ribuan fork per siklus.
+  if [[ -n "${VPSNAT_CONF_CACHE_USED:-}" ]]; then
+    printf '%s' "${VPSNAT_CONF_CACHE[$1]:-}"
+    return 0
+  fi
   [[ -f "$CONF_FILE" ]] || return 0
-  grep -E "^$1=" "$CONF_FILE" | tail -n1 | cut -d= -f2-
+  # `|| true`: key yang tidak ada bukan error (penting di bawah `set -e` + `pipefail`).
+  { grep -E "^$1=" "$CONF_FILE" 2>/dev/null || true; } | tail -n1 | cut -d= -f2- || true
+}
+
+declare -gA VPSNAT_CONF_CACHE=()
+VPSNAT_CONF_CACHE_USED=""
+
+conf_cache_load() {
+  local line k v
+  VPSNAT_CONF_CACHE=()
+  if [[ -r "$CONF_FILE" ]]; then
+    while IFS= read -r line; do
+      [[ -z "$line" ]] && continue
+      [[ "$line" == \#* ]] && continue
+      [[ "$line" == *=* ]] || continue
+      k="${line%%=*}"
+      v="${line#*=}"
+      VPSNAT_CONF_CACHE["$k"]="$v"
+    done < "$CONF_FILE"
+  fi
+  VPSNAT_CONF_CACHE_USED=1
+}
+
+conf_cache_clear() {
+  VPSNAT_CONF_CACHE=()
+  VPSNAT_CONF_CACHE_USED=""
 }
 
 conf_set() {
@@ -149,6 +202,20 @@ conf_set() {
   else
     printf '%s=%s\n' "$1" "$2" >> "$CONF_FILE"
   fi
+  # Jaga cache tetap akurat bila sedang aktif (mis. settings berubah di proses yang sama).
+  [[ -n "${VPSNAT_CONF_CACHE_USED:-}" ]] && VPSNAT_CONF_CACHE["$1"]="$2"
+  return 0
+}
+
+# Bandingkan persentase berformat "%.2f" dengan ambang integer tanpa subprocess.
+# pct_ge <pct> <limit_int> -> 0 bila pct >= limit.
+pct_ge() {
+  local pct="${1:-0}" lim="${2:-0}" ip fp
+  [[ "$pct" =~ ^[0-9]+([.][0-9]+)?$ && "$lim" =~ ^[0-9]+$ ]] || return 1
+  ip="${pct%%.*}"
+  if [[ "$pct" == *.* ]]; then fp="${pct#*.}"; else fp=""; fi
+  fp="${fp}00"
+  (( 10#${ip:-0} * 100 + 10#${fp:0:2} >= 10#$lim * 100 ))
 }
 
 # Slice port per node (di-set oleh `vpsnat relay join|slice`). Kosong = range penuh PORT_MIN-PORT_MAX.
@@ -163,6 +230,31 @@ cfg_int() {
   v=$(conf_get "$key")
   [[ "$v" =~ ^[0-9]+$ ]] && { echo "$v"; return; }
   echo "$fallback"
+}
+
+# Varian tanpa subshell untuk hot path: hasil ke variabel pemanggil.
+# Nama variabel internal sengaja berbeda dari parameter (tanpa `local` ganda yang
+# menimpa argumen — bug halus yang sempat membuat nilai selalu kosong).
+conf_get_var() {
+  if [[ -n "${VPSNAT_CONF_CACHE_USED:-}" ]]; then
+    printf -v "$1" '%s' "${VPSNAT_CONF_CACHE[$2]:-}"
+    return 0
+  fi
+  local _cgv=""
+  if [[ -f "$CONF_FILE" ]]; then
+    _cgv=$({ grep -E "^$2=" "$CONF_FILE" 2>/dev/null || true; } | tail -n1 | cut -d= -f2- || true)
+  fi
+  printf -v "$1" '%s' "$_cgv"
+}
+
+cfg_int_var() {
+  local _civ=""
+  conf_get_var _civ "$2"
+  if [[ "$_civ" =~ ^[0-9]+$ ]]; then
+    printf -v "$1" '%s' "$_civ"
+  else
+    printf -v "$1" '%s' "$3"
+  fi
 }
 
 # Passwords are fed to `chpasswd` over stdin; reject delimiters, whitespace,
