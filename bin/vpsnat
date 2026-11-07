@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# VPSNAT — panel & node manager VPS (LXD + NAT).
+#
+# Sumber dipecah per folder (lib/, panel/, node/, scripts/, systemd/, tests/, docs/).
+# Entry point ini hanya menyiapkan path lalu memuat lib/bootstrap.sh.
+#
+#   bash bin/vpsnat install-panel     pasang control-plane (DB, web panel, bot)
+#   bash bin/vpsnat install-node      pasang data-plane (LXD, NAT, agent)
+#   bash bin/vpsnat install           deteksi peran dari instalasi/lingkungan
+#
+# Dipanggil lewat `bash bin/vpsnat ...` agar instalasi pertama tidak bergantung
+# pada execute-bit file di git.
+
+set -uo pipefail
+
+VPSNAT_APP_DIR="${VPSNAT_APP_DIR:-$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)}"
+export VPSNAT_APP_DIR
+
+# shellcheck source=/dev/null
+source "${VPSNAT_APP_DIR}/lib/bootstrap.sh"
+
+main "$@"

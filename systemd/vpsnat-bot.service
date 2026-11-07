@@ -1,0 +1,20 @@
+[Unit]
+Description=VPSNAT Telegram Bot (panel)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/etc/vpsnat/bot
+Environment=PYTHONPATH=/etc/vpsnat/bot:/etc/vpsnat/web
+Environment=VPSNAT_PANEL_DB=/etc/vpsnat/panel.db
+Environment=VPSNAT_WEB_CONF=/etc/vpsnat/vpsnat.conf
+Environment=VPSNAT_BOT_BACKEND=panel
+ExecStart=/etc/vpsnat/bot/venv/bin/python /etc/vpsnat/bot/bot.py
+Restart=always
+RestartSec=5
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

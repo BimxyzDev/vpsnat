@@ -1,0 +1,11 @@
+[Unit]
+Description=Jalankan VPSNAT panel job worker berkala
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=20s
+AccuracySec=5s
+Persistent=false
+
+[Install]
+WantedBy=timers.target

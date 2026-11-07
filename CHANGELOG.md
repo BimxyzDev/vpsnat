@@ -1,5 +1,107 @@
 # Changelog
 
+## 4.0.0 — 2026-11-07
+
+Rilis arsitektur **panel/node** (model Pterodactyl). Satu panel menyimpan semua data
+client; satu atau banyak node menjalankan seluruh VPS client. Repo dipecah per folder
+dan UI panel dirombak menjadi halaman-halaman terpisah.
+
+### Peran host: panel, node, atau both
+
+- `vpsnat install-panel` — control-plane: panel DB, web UI + REST API, bot, worker job.
+  Tidak memasang LXD dan tidak menjalankan VPS client, jadi cukup VPS kecil.
+- `vpsnat install-node` — data-plane: LXD, NAT/port forwarding, bandwidth, monitor,
+  expiry, hardening, dan agent HTTP (port 8788) yang melayani perintah panel.
+- `vpsnat setup` interaktif memilih peran; `vpsnat install` memasang keduanya di satu
+  host (mode lama, tetap didukung).
+- Peran disimpan di `/etc/vpsnat/role`; `vpsnat role [panel|node|both]` untuk melihat
+  atau mengubahnya. Perintah yang butuh LXD ditolak di panel murni (`require_node_role`).
+
+### Panel DB (SQLite) sebagai sumber kebenaran
+
+- Tabel: `nodes`, `allocations`, `servers`, `jobs`, `settings`, `audit` (`panel/db.py`).
+  Panel menyimpan nama client, kredensial, WAN IP node, dan port SSH yang dipakai client
+  untuk login — semua di satu tempat.
+- **Pool port milik panel**: panel mengambil port dari `allocations`, menandainya milik
+  server, lalu mengirim daftar eksplisit ke node. Node hanya memasang DNAT
+  (`VPSNAT_ALLOC_PORTS`), jadi satu port tidak pernah dipakai dua client.
+- `jobs` yang masih `running` tanpa `node_job` ditandai `interrupted` saat panel start,
+  supaya bisa diulang dengan aman.
+
+### Agent node (padanan `wings`)
+
+- `node/agent.py`: HTTP JSON di `/api/v1`, autentikasi Bearer token
+  (`/etc/vpsnat/node.json`), job untuk operasi panjang, `/health`, dan `/system`.
+- Panel selalu yang menghubungi node (`panel/nodeclient.py`), jadi tidak ada port panel
+  yang perlu dibuka untuk node.
+- Semua provisioning tetap dijalankan CLI Bash `vpsnat`, sehingga perilaku CLI, bot, dan
+  panel tidak menyimpang.
+
+### Job & sinkronisasi
+
+- `panel/jobs.py` + `panel/worker.py` (systemd timer 20 detik): request hanya menulis
+  baris `jobs` lalu membalas `202`; worker mengirim ke node, memantau, dan menyimpan hasil.
+- `panel/sync.py` menarik state, alasan suspend, dan pemakaian bandwidth dari node ke
+  panel DB, termasuk password hasil reinstall/ganti password.
+
+### Repo dipecah per folder
+
+```text
+bin/vpsnat           lib/{core,node,panel,system,cli}/
+panel/{app,panelapp,db,jobs,nodeclient,sync,worker,cli_shim,panelctl,bot}.py + web/
+node/agent.py        scripts/{install-panel,install-node,get,_bootstrap}.sh
+systemd/             tests/{test.sh,test_panel.py,mock_node.py}    docs/
+```
+
+- `bin/vpsnat` hanya menyiapkan path lalu memuat `lib/bootstrap.sh`.
+- Installer menyalin seluruh paket (`lib/`, `panel/`, `node/`) ke `/usr/local/lib/vpsnat`
+  dan memasang wrapper ke `/usr/local/bin/vpsnat`.
+- `scripts/install-panel.sh` dan `scripts/install-node.sh` bisa dipakai lewat `curl | bash`
+  maupun dari clone lokal; `scripts/get.sh` tetap ada sebagai bootstrap kompatibilitas
+  yang mendeteksi peran.
+
+### UI panel: halaman terpisah
+
+- Sembilan halaman berdiri sendiri di `panel/web/pages/`: dashboard, servers, server
+  (detail), nodes, jobs, settings, api-docs, login, account.
+- Aset dipisah: `panel/web/static/css/app.css`, `static/js/app.js` (inti), dan
+  `static/js/page-<nama>.js` per halaman. Tidak ada lagi satu `web.html` monolitik.
+- Router halaman memakai `app.page()`; placeholder `{{NONCE}}`, `{{BRAND}}`, `{{VERSION}}`,
+  `{{UIVER}}` diisi saat request. `ui_version()` berubah bila halaman/CSS/JS berubah,
+  sehingga cache PWA ikut diperbarui.
+
+### Bot Telegram di panel
+
+- Bot berjalan di panel dan memakai `panel/cli_shim.py`: perintah gaya-CLI dijawab dari
+  panel DB lalu diteruskan ke agent node. Logika bot tidak ditulis ulang.
+- `vpsnat bot-setup` menolak berjalan di node murni dan menyalin modul panel yang
+  dibutuhkan ke `/etc/vpsnat/bot`.
+
+### Dokumentasi
+
+- README ditulis ulang: diagram panel/node, langkah pasang per peran, tabel halaman,
+  struktur repo, ringkasan CLI, dan contoh API.
+- Docs baru: `ARCHITECTURE.md`, `INSTALL-PANEL.md`, `INSTALL-NODE.md`, `CLI.md`,
+  `API.md`, `UPGRADE.md`, `TROUBLESHOOTING.md`.
+- Dokumentasi API di panel (`/api-docs`) dibaca dari router sungguhan, jadi endpoint baru
+  tidak bisa hilang dari dokumentasi tanpa ketahuan (ada penanda untuk endpoint yang belum
+  diberi deskripsi).
+
+### Tes
+
+- `tests/test_panel.py` + `tests/mock_node.py`: menyalakan agent node tiruan, panel
+  sungguhan, dan worker di port acak; 63 assertion alur penuh (login, registry node,
+  alokasi port, create via job, sync, power/resize/port/password, login client lewat nama
+  & port SSH, CSRF/API key, semua halaman, hapus server).
+- `tests/test.sh` disesuaikan ke struktur folder baru dan menambah pemeriksaan bahwa panel
+  mengalokasikan port sendiri.
+
+### Catatan upgrade
+
+Instalasi v3 (satu host) tetap bisa memakai `vpsnat upgrade`. Untuk memisahkan peran:
+pasang panel baru, pasang/pertahankan node, lalu daftarkan node ke panel. Lihat
+`docs/UPGRADE.md`.
+
 ## 3.4.1 — 2026-10-26
 
 Rilis kesiapan skala besar. Fokus: biaya monitor yang tadinya kuadratik, permukaan serang

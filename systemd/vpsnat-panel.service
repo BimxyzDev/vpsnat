@@ -1,0 +1,20 @@
+[Unit]
+Description=VPSNAT Panel (web UI + REST API)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/etc/vpsnat/web
+Environment=VPSNAT_WEB_DIR=/etc/vpsnat/web
+Environment=VPSNAT_PANEL_DB=/etc/vpsnat/panel.db
+Environment=VPSNAT_WEB_CONF=/etc/vpsnat/vpsnat.conf
+Environment=PYTHONPATH=/etc/vpsnat/web
+ExecStart=/usr/bin/python3 /etc/vpsnat/web/app.py
+Restart=always
+RestartSec=5
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

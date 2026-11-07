@@ -1,0 +1,11 @@
+[Unit]
+Description=VPSNAT panel job worker (kirim job ke node, sync status)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+Environment=VPSNAT_PANEL_DB=/etc/vpsnat/panel.db
+Environment=PYTHONPATH=/etc/vpsnat/web
+ExecStart=/usr/local/bin/vpsnat panel-worker
+Nice=5

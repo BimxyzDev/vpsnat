@@ -1,648 +1,284 @@
 # VPSNAT Manager
 
-VPSNAT adalah manager VPS berbasis LXD + Linux NAT untuk provisioning, port forwarding, resource control, bandwidth quota, bandwidth shaping, expiry, administrasi Telegram, dan **web panel** (UI + REST API) dengan dukungan domain + HTTPS.
+Manager VPS berbasis **LXD + Linux NAT** dengan model **panel/node** seperti Pterodactyl:
+satu **panel** menyimpan semua data client, dan satu atau banyak **node** menjalankan
+seluruh proses VPS client.
+
+```
+                    ┌───────────────────────────────┐
+   admin / client   │  PANEL (control-plane)        │
+   ───────────────► │  • data client + kredensial   │
+     HTTPS          │  • IP & port SSH untuk login  │
+                    │  • web UI + REST API          │
+                    │  • bot Telegram, worker job   │
+                    └───────────┬───────────────────┘
+                                │  HTTP + Bearer token (panel → node)
+                    ┌───────────▼───────────────────┐
+                    │  NODE (data-plane)            │
+                    │  • LXD: container / VM client │
+                    │  • NAT + port forwarding      │
+                    │  • bandwidth, monitor, expiry │
+                    │  • agent (padanan wings)      │
+                    └───────────┬───────────────────┘
+                                │
+                        client SSH ke IP:port node
+```
+
+- **Panel** bisa VPS kecil (2 GB RAM cukup untuk ratusan client): tidak ada LXD, tidak
+  ada VPS client. Kalau panel mati, VPS client tetap berjalan di node.
+- **Node** menjalankan seluruh beban: LXD, DNAT, `tc`, monitor auto-suspend, expiry,
+  hardening. Node tidak butuh akses masuk ke panel — panel selalu yang menghubungi node.
+- **Pool port milik panel.** Panel mengalokasikan port dari `allocations` lalu mengirim
+  daftar eksplisit ke node, jadi satu port tidak pernah dipakai dua client.
 
 ## Fitur
 
-- Provisioning VPS container/VM (LXD) dengan NAT, port forwarding otomatis, dan quota bandwidth
-- Model shared vs dedicated, auto-suspend, expiry, snapshot, dan relay WireGuard
-- Multi-node dashboard
-- **Hardening (v3.4.0)**: limit proses, anti-spoofing NIC, blokir SMTP outbound, batas koneksi per VPS, MSS clamp relay, preflight ruang disk, backup DB sebelum upgrade, auto-suspend leaky bucket
-- Bot Telegram untuk admin
-- **Web panel**: login admin dan user, resource live, ganti password, REST API admin
-- **PWA**: panel bisa dipasang sebagai aplikasi di HP/desktop (butuh HTTPS), dengan dark mode otomatis
-- **Domain + HTTPS** otomatis (nginx + Let's Encrypt) atau Cloudflare Tunnel
+- Provisioning VPS container/VM (LXD) dengan NAT + port forwarding otomatis
+- Model shared vs dedicated, auto-suspend berbasis CPU/RAM, expiry, snapshot, relay WireGuard
+- **Web panel multi-halaman**: dashboard, server, detail server, node, job, setting, API docs
+- **REST API** penuh + API key untuk otomasi; dokumentasi hidup di `/api-docs`
+- **Bot Telegram** untuk admin (berjalan di panel)
+- **PWA**: panel bisa dipasang sebagai aplikasi (butuh HTTPS), dark mode otomatis
+- **Hardening**: limit proses, anti-spoofing NIC, blokir SMTP, batas koneksi, MSS clamp
+- **Audit trail**: siapa mengubah apa dan kapan
+- Domain + HTTPS otomatis (nginx + Let's Encrypt) atau Cloudflare Tunnel
 
-## Requirement
+## Pasang
 
-- Ubuntu/Debian dengan akses root dan kernel yang mendukung LXD
-- Python 3.8+ (untuk bot dan web panel; web panel tidak butuh paket pip)
-- Port publik inbound dari provider (atau relay WireGuard)
-- Opsional: domain yang A record-nya mengarah ke host untuk HTTPS
+### 1. Panel (control-plane)
 
-## Struktur
+Di VPS kecil yang akan menjadi otak sistem:
 
-Semua file project berada dalam **satu folder**. Tidak ada direktori `lib/`, `bot/`, `scripts/`, atau `systemd/`, sehingga folder ini bisa di-upload sebagai satu paket ke GitHub/Codespaces.
+```bash
+curl -fsSL https://raw.githubusercontent.com/BimxyzDev/vpsnat/main/scripts/install-panel.sh | sudo bash
+sudo vpsnat web-setup            # tanya port, username, password admin
+```
+
+Panel menyala di `http://IP-PANEL:8787`. Pasang domain + HTTPS:
+
+```bash
+sudo vpsnat web-domain panel.contoh.com nginx admin@contoh.com
+```
+
+### 2. Node (data-plane)
+
+Di setiap server yang akan menjalankan VPS client (butuh kernel yang mendukung LXD):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/BimxyzDev/vpsnat/main/scripts/install-node.sh | sudo bash
+sudo vpsnat node init            # cetak nama + token node
+```
+
+### 3. Hubungkan node ke panel
+
+Di **panel**:
+
+```bash
+sudo vpsnat node add node-1 http://IP-NODE:8788 IP-PUBLIK-NODE 20000-24999
+# tempel token dari langkah 2 dengan opsi --token <token>
+sudo vpsnat node list
+sudo vpsnat node ping node-1
+```
+
+Atau dari **node** (token dari panel): `sudo vpsnat node attach <token>`.
+
+Buka port `8788/tcp` di firewall node **hanya untuk IP panel**.
+
+### 4. Buat VPS client
+
+Lewat panel web (**Server → Server baru**) atau CLI di panel:
+
+```bash
+sudo vpsnat create web-01
+```
+
+Client lalu login SSH dengan:
+
+```
+ssh root@IP-PUBLIK-NODE -p PORT-SSH
+```
+
+Port SSH, IP, dan password ditampilkan di halaman detail server di panel, dan di
+`vpsnat info web-01` pada node.
+
+## Halaman panel
+
+| Halaman | Isi |
+|---|---|
+| `/` | Dashboard: ringkasan server, node online, resource host tiap node |
+| `/servers` | Daftar + form buat server, filter status/expiry |
+| `/servers/<nama>` | Detail: info, resource live, kontrol, resize, expiry, password, bandwidth, port, reinstall, hapus |
+| `/nodes` | Registry node: tambah, ping, token, maintenance, pool port, hapus |
+| `/jobs` | Riwayat operasi panjang + output lengkap |
+| `/settings` | Setting panel + audit trail |
+| `/api-docs` | Dokumentasi API (dibaca dari router, selalu sinkron) |
+| `/login` | Login admin & client |
+| `/account` | Halaman client: server sendiri, resource, kontrol, ganti password |
+
+Setiap halaman adalah berkas HTML sendiri di `panel/web/pages/` dengan JS-nya di
+`panel/web/static/js/page-*.js`; CSS bersama di `panel/web/static/css/app.css`.
+
+## Struktur repository
 
 ```text
 vpsnat/
-├── vpsnat
-├── core.sh
-├── db.sh
-├── network.sh
-├── harden.sh
-├── relay.sh
-├── ports.sh
-├── bandwidth.sh
-├── resource.sh
-├── vps.sh
-├── expire.sh
-├── data.sh
-├── nodes.sh
-├── bot.sh
-├── install.sh
-├── update.sh
-├── get.sh
-├── settings.sh
-├── cli.sh
-├── bot.py
-├── web.sh
-├── web.py
-├── web.html
-├── test.sh
-├── test_web.py
-├── check.sh
-├── vpsnat-monitor.service
-├── vpsnat-restore.service
-├── vpsnat-expire.service
-├── vpsnat-expire.timer
-├── ci.yml.example
-├── config.example
-├── .gitignore
-├── CHANGELOG.md
-├── LICENSE
-└── README.md
+├── bin/vpsnat                 # entry point CLI (memuat lib/bootstrap.sh)
+├── lib/
+│   ├── bootstrap.sh           # memuat semua modul sesuai peran
+│   ├── core/                  # core.sh, db.sh, audit.sh, settings.sh
+│   ├── node/                  # network, vps, ports, bandwidth, resource, expire, harden, relay, data, nodes
+│   ├── panel/                 # registry.sh (registry node + alokasi di panel)
+│   ├── system/                # install, update, panel, node, web, bot
+│   └── cli/cli.sh             # router perintah + menu
+├── panel/                     # APLIKASI PANEL (Python stdlib)
+│   ├── app.py                 # entry tipis → panelapp.main()
+│   ├── panelapp.py            # inti: HTTP server, router, sesi, validasi, PWA
+│   ├── db.py                  # SQLite panel (nodes, allocations, servers, jobs, settings, audit)
+│   ├── jobs.py                # registry job panel → node
+│   ├── nodeclient.py          # klien HTTP agent node
+│   ├── sync.py                # tarik state/kredensial/bandwidth dari node
+│   ├── worker.py              # worker job (systemd timer 20 detik)
+│   ├── cli_shim.py            # perintah gaya-CLI untuk bot di panel
+│   ├── panelctl.py            # utilitas control-plane (dipakai CLI Bash)
+│   ├── bot.py                 # bot Telegram
+│   └── web/
+│       ├── pages/             # HTML per halaman + modul API (core_api, servers, nodes, openapi)
+│       └── static/            # css/app.css, js/app.js, js/page-*.js
+├── node/agent.py              # daemon agent node (padanan wings), port 8788
+├── scripts/                   # install-panel.sh, install-node.sh, get.sh, _bootstrap.sh, check.sh
+├── systemd/                   # template unit (panel, worker, node, monitor, expire, bot, restore)
+├── tests/                     # test.sh (bash), test_panel.py, mock_node.py
+└── docs/                      # ARCHITECTURE, INSTALL-PANEL, INSTALL-NODE, CLI, API, UPGRADE, TROUBLESHOOTING
 ```
 
-## Model shared vs dedicated
+## Perintah CLI
 
-- **shared**: tetap memakai batas CPU/RAM LXD. Monitor berjalan berkala; beban penuh (CPU/RAM di ambang) yang terakumulasi selama threshold membuat VPS otomatis disuspend. Sampel normal hanya mengurangi skor (leaky bucket), tidak mereset hitungan — lihat bagian *Hardening*.
-- **dedicated**: tidak terkena auto-suspend berbasis CPU/RAM. Bandwidth speed limit dapat diatur dengan `tc`.
-
-Default auto-suspend shared: **60 menit**. Interval monitoring default: **15 detik**.
-
-## Hardening (v3.4.0)
-
-Perlindungan host dari VPS yang abusif. Semua default bisa diubah lewat `vpsnat settings set ...` atau `vpsnat.conf`.
-
-| Perlindungan | Default | Pengaturan |
-|---|---|---|
-| Limit proses per container (anti fork-bomb, `limits.processes`) | shared 512, dedicated 2048 | `proc-limit-shared`, `proc-limit-dedicated` (0 = tanpa batas) |
-| Anti-spoofing NIC (`security.mac_filtering`, `security.ipv4_filtering`, `security.ipv6_filtering` best-effort) | aktif | `ANTISPOOF=0` di `vpsnat.conf` |
-| Blokir SMTP outbound dari VPS | aktif, port `25,465,587` | `smtp-block` (0/1), `SMTP_BLOCK_PORTS` |
-| Batas koneksi baru concurrent per VPS (conntrack `connlimit`) | 1024 | `conn-limit` (0 = nonaktif) |
-| MSS clamp relay & node (`TCPMSS --clamp-mss-to-pmtu`) | otomatis | — |
-| Preflight ruang disk | aktif | `PREFLIGHT=0`, `PREFLIGHT_BUFFER_GB` (2), `PREFLIGHT_CREATE_GB` (3) |
-| Backup DB sebelum upgrade | otomatis | `DB_BACKUP_KEEP` (5) |
-
-VPS baru, `clone`, `reinstall`, dan `set-type` otomatis ter-hardening. Untuk VPS lama:
+Perintah VPS (`create`, `list`, `start`, …) berjalan di **node**; di panel gunakan web/API
+atau jalankan langsung di node. Perintah `node`, `web`, `bot`, `panel`, `jobs`, `sync`,
+`alloc`, `servers` berjalan di **panel**.
 
 ```bash
-vpsnat harden --check      # laporan limit proses + status filter NIC tiap VPS
-vpsnat harden all          # terapkan ke semua VPS (filter NIC pada VPS berjalan dapat memutus jaringan beberapa detik)
-vpsnat harden web1         # satu VPS
+# peran & diagnosa
+vpsnat role                      # tampilkan/ubah peran host
+vpsnat doctor                    # ringkasan kesehatan panel atau node
+vpsnat check                     # cek dukungan virtualisasi (KVM)
+
+# panel: registry node
+vpsnat node add <nama> <url> <wan-ip> [pool]   # daftarkan node (token dicetak)
+vpsnat node list | show <nama> | ping <nama> | token <nama> | del <nama>
+vpsnat node init                 # (di node) identitas + token
+vpsnat node attach <token>       # (di node) terima token dari panel
+vpsnat alloc [node] [--free]     # alokasi port
+vpsnat servers [--node N]        # daftar server versi panel
+vpsnat jobs [id]                 # riwayat job
+vpsnat sync                      # tarik status semua server dari node
+vpsnat panel worker once         # jalankan worker sekali
+
+# panel: web & bot
+vpsnat web-setup [port] [user] [pass]
+vpsnat web [on|off|restart|status|logs|key|passwd|domain|remove]
+vpsnat web-domain <domain> [nginx|tunnel] [email]
+vpsnat bot-setup [token] [chat_id]
+vpsnat bot [on|off|restart|status|logs|remove]
+
+# node: VPS client
+vpsnat create [nama] | list | info <nama>
+vpsnat start|stop|restart|suspend|unsuspend <nama>
+vpsnat resize <nama> | passwd <nama> | reinstall <nama> [image]
+vpsnat delete <nama> | clone <nama> [baru] | set-type <nama> shared|dedicated
+vpsnat port-add <nama> <tcp|udp|both> <jumlah> | port-del <nama> <port> | port-list <nama>
+vpsnat bandwidth <nama> [show|set <gb> <mbps>|limit <mbps>|reset]
+vpsnat renew <nama> 30d | set-expire <nama> <30d|YYYY-MM-DD|never> | expiring [hari]
+vpsnat set-owner <nama> <label>
+vpsnat snapshot <nama> [create|list|restore|delete]
+vpsnat backup <nama> | restore-backup [file] | stats <nama> | host
+vpsnat monitor [on|off|restart|status|logs] | settings [show|set]
+vpsnat harden [nama|all] [--check] | audit [tail [N]|search <kata>]
+
+# perawatan
+vpsnat update [--check|--force]  # ambil source terbaru dari GitHub, tes, lalu upgrade
+vpsnat upgrade                   # pasang ulang runtime lokal + migrasi DB
+vpsnat uninstall [panel|node|all]
 ```
 
-Catatan penting:
+Detail lengkap: [docs/CLI.md](docs/CLI.md).
 
-- Anti-spoofing memblokir paket dengan MAC/IP yang bukan milik VPS. VPS yang menjalankan bridge/LXD bersarang dengan MAC lain di belakang `eth0` akan terblokir; matikan dengan `ANTISPOOF=0` bila memang dibutuhkan.
-- Blokir SMTP juga menutup 465/587. Aplikasi yang mengirim email lewat relay SMTP eksternal pada port itu akan terblokir; gunakan `vpsnat settings set smtp-block 0` atau `SMTP_BLOCK_PORTS=25`.
-- `conn-limit` menghitung koneksi baru keluar dari VPS (semua protokol). Beban DNS/crawler/proxy tinggi mungkin butuh nilai lebih besar.
-- Guard firewall memakai modul kernel `xt_connlimit` dan `xt_multiport`. Jika tidak ada, guard terkait dilewati dengan peringatan dan firewall tetap berjalan.
-- `limits.processes` hanya untuk container; VM tidak mengenalnya.
+## API
 
-### Auto-suspend shared: leaky bucket
+Semua endpoint di bawah `/api/`. Autentikasi:
 
-Versi ≤ 3.3 mereset hitungan pada satu sampel di bawah ambang, sehingga pola "penuh 55 menit + 1 sampel idle" tidak pernah tersuspend. Sejak 3.4.0 tiap VPS shared punya skor penalti (detik) di `/etc/vpsnat/monitor/<nama>.penalty`: naik sebesar lama sampel saat beban penuh, turun `PENALTY_DECAY_PERCENT` (25%) dari lama sampel saat normal. VPS disuspend bila skor ≥ `SHARED_SUSPEND_MINUTES` × 60.
-
-- Ambang CPU = `SHARED_RESOURCE_THRESHOLD` − `SHARED_CPU_TOLERANCE` (default 100 − 2). Rata-rata CPU per 15 detik hampir tak pernah tepat 100% walau VPS memakai semua core. RAM tanpa toleransi (usage cgroup dapat memuat page cache).
-- Langkah per sampel dibatasi 4× interval agar jeda monitor tidak melonjakkan skor.
-- Monitor menunggu lock alokasi paling lama `MONITOR_LOCK_TIMEOUT` (20 detik). Auto-suspend yang gagal karena lock dicoba lagi pada siklus berikutnya.
-- Kolom DB `high_since` tidak dipakai lagi (nilai lama dimigrasikan otomatis jadi skor awal). Schema tetap 25 field.
-
-### Preflight ruang disk
-
-`create`, `clone`, `snapshot create`, `backup`, dan `restore-backup` ditolak lebih awal bila ruang bebas < operasi × 1,2 + buffer 2 GB. Ruang bebas = yang lebih kecil antara sisa pool LXD dan filesystem host. Perkiraan operasi: create = image (3 GB; kuota disk thin-provisioned tidak dihitung penuh), clone/snapshot = pemakaian disk VPS pada pool `dir` (0 pada ZFS/Btrfs/LVM karena copy-on-write), backup = pemakaian disk VPS pada filesystem host, restore-backup = ukuran file × 2. Bila ruang tak terdeteksi, operasi dilanjutkan dengan peringatan.
-
-### Backup DB
-
-`vpsnat upgrade` menyalin `vps.db` ke `/etc/vpsnat/backups/vps.db.pre-upgrade.v<versi>.<waktu>` (mode 0600, 5 terbaru) sebelum migrasi pertama. Jumlah record dan struktur diverifikasi setelah migrasi; bila tidak cocok, DB dipulihkan otomatis. Backup manual: `vpsnat db-backup` (`vpsnat db-backup list` untuk daftar).
-
-## Bandwidth
-
-VPSNAT menyimpan pemakaian **RX + TX** per VPS dan dapat memberi quota dalam GB. Counter menggunakan statistik interface host (`/sys/class/net/.../statistics`) pada veth/tap VPS.
-
-Contoh:
+- **API key** (skrip/otomasi): `Authorization: Bearer <WEB_API_KEY>` — buat dengan `vpsnat web key`.
+- **Cookie sesi** (UI): login `/api/login/admin` atau `/api/login/user`; setiap
+  `POST`/`DELETE` wajib header `X-Requested-With: vpsnat`.
 
 ```bash
-# Quota 500 GB + speed 100 Mbps
-vpsnat bandwidth myvps set 500 100
+KEY=<WEB_API_KEY>; BASE=https://panel.contoh.com
 
-# Tanpa quota, tetapi speed 200 Mbps
-vpsnat bandwidth myvps set 0 200
+# daftar node & server
+curl -s -H "Authorization: Bearer $KEY" $BASE/api/admin/nodes
+curl -s -H "Authorization: Bearer $KEY" $BASE/api/admin/servers
 
-# Lihat pemakaian
-vpsnat bandwidth myvps show
+# buat server (job) lalu pantau
+JOB=$(curl -s -X POST -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
+  -d '{"name":"web-01","cpu":2,"ram":2048,"disk":20,"ports":5,"expire":"30d"}' \
+  $BASE/api/admin/servers | python3 -c 'import json,sys;print(json.load(sys.stdin)["job"])')
+curl -s -H "Authorization: Bearer $KEY" $BASE/api/jobs/$JOB
 
-# Reset quota counter
-vpsnat bandwidth myvps reset
+# detail + kredensial SSH
+curl -s -H "Authorization: Bearer $KEY" $BASE/api/admin/servers/web-01
 ```
 
-Rate limit memakai `tc` pada interface host VPS: egress memakai TBF, ingress memakai policing. Linux `tc` memang melakukan shaping pada egress dan policing pada ingress.
+Dokumentasi interaktif (semua endpoint + contoh curl): buka **API** di panel, atau
+`GET /api/openapi`. Rincian: [docs/API.md](docs/API.md).
 
-Saat quota habis, forwarding untuk IP VPS diblokir sampai quota di-reset atau diperpanjang. Renewal mereset counter quota.
-
-## Port allocation
-
-Tidak perlu memasukkan `20000-20010` lagi. Masukkan **jumlah port**:
+## Bot Telegram
 
 ```bash
-vpsnat port-add myvps tcp 10
-```
-
-VPSNAT mencari range kontigu kosong, misalnya `20010-20019`, lalu melakukan mapping port publik ke port internal yang sama.
-
-Bila tidak ada satu blok kontigu yang cukup, alokasi dipecah menjadi paling banyak `PORT_SPLIT_MAX_CHUNKS` (default 3) blok kontigu dengan greedy best-fit, misalnya `20014,20020-20029`. Set `PORT_SPLIT_MAX_CHUNKS=1` untuk kembali ke perilaku wajib-kontigu. Port internal tetap sama dengan port publik (kecuali `INT_START` eksplisit, yang berurutan lintas blok).
-
-Saat membuat VPS, **jumlah port total** adalah 2-50 (default 3) dan sudah termasuk 1 port SSH. Contoh: `ports=6` → 1 port SSH + 5 port aplikasi (masing-masing TCP+UDP). Batas ini diatur oleh `VPS_PORTS_MAX` di `core.sh` (dan `PORTS_MAX` di `web.py`; ubah keduanya bersamaan). Port tambahan setelah VPS dibuat memakai `port-add` (1-500 per perintah).
-
-## Universal Network / Relay
-
-VPSNAT tidak mengunci provider. Mode `direct` memakai public IPv4 dan port inbound yang diberikan provider. Untuk VPS yang inbound-nya dibatasi provider, gunakan VPS relay yang dapat menerima trafik publik lalu meneruskannya melalui WireGuard.
-
-### Direct
-
-```text
-Internet → Public IPv4 host → VPSNAT DNAT → LXD VPS
-```
-
-### Relay (1 relay, banyak node)
-
-Relay adalah VPS kecil dengan IP publik. Relay meneruskan TCP/UDP port buyer ke node VPSNAT lewat WireGuard; VPS buyer, database, dan web panel tetap di node. Tiap node mendapat **slice port publik sendiri** (default 5000 port per node, dari range `20000-59999`) dan IP tunnel `10.250.0.x`, jadi satu relay bisa melayani sampai 8 node dengan default.
-
-```text
-Buyer -> IP relay:port -> WireGuard -> node (slice port itu) -> VPS buyer
-```
-
-**1. Di relay (sekali)**
-
-```bash
-vpsnat relay init
-```
-
-**2. Di relay, per node**
-
-```bash
-vpsnat relay node-add node1              # slice otomatis (mis. 20000-24999)
-vpsnat relay node-add node2 30000-39999  # atau tentukan range sendiri (node besar)
-```
-
-Perintah ini membuat peer, mengalokasikan IP tunnel dan slice, lalu mencetak satu baris `vpsnat relay join <token>`.
-
-**3. Di node, tempel baris itu**
-
-```bash
-vpsnat relay join <token>
-```
-
-Node tersambung ke relay, alokasi port VPS dibatasi ke slice-nya, dan `PUBLIC_IP` diset ke IP relay agar info SSH untuk buyer benar. Token memuat private key WireGuard node: jangan dibagikan, cukup dipakai sekali.
-
-**4. Firewall provider relay**: buka UDP `51820` dan TCP/UDP untuk semua slice yang dipakai. VPSNAT tidak bisa membuka firewall akun provider dari dalam server.
-
-Kelola dari relay:
-
-```bash
-vpsnat relay node-list            # label, IP tunnel, slice, status handshake
-vpsnat relay node-del node1       # hapus node (aturan dan peer dicabut tanpa restart tunnel)
-vpsnat relay status
-```
-
-Di node yang dilepas: `vpsnat relay detach` (mengembalikan `PUBLIC_IP` dan alokasi port ke semula). Pemasangan manual (tanpa token) tetap ada: `vpsnat relay attach` di node lalu `vpsnat relay peer-add <node-ip> <node-public-key> [min-max] [label]` di relay, dan `vpsnat relay slice <min-max>` di node untuk membatasi alokasi port.
-
-Catatan:
-- Host relay boleh sekaligus menjalankan VPS sendiri: `node-add` otomatis menghindari port VPS lokal dan menolak range yang bentrok. Untuk mencadangkan range host sejak awal: `vpsnat relay slice 20000-24999` di relay sebelum `node-add`.
-- Node yang sudah punya VPS di luar slice barunya akan diperingatkan saat `join`; port di luar slice tidak diteruskan relay.
-- Relay yang dibuat versi lama (satu node, seluruh range) harus `detach` lalu `init` ulang untuk memakai mode ini.
-- Panel web (default port `8787`) tidak termasuk range yang diteruskan relay; pasang domain/HTTPS di node (`vpsnat web-domain`) atau gunakan jalur sendiri.
-
-## Repository
-
-Target repository: `BimxyzDev/vpsnat`. Tree di repo sengaja dipecah per modul agar GitHub tidak bergantung pada satu file monolitik dan mudah dipelihara.
-
-## Multi-Node Dashboard
-
-Untuk deployment dengan beberapa node (misal: relay Linode + beberapa node NAT UpCloud/lainnya),
-`vpsnat nodes` memberi ringkasan gabungan tanpa perlu SSH satu-satu ke tiap server.
-
-Prasyarat: semua node terhubung ke **relay WireGuard yang sama** (lihat bagian Relay di atas), sehingga tiap node punya IP tunnel `10.250.0.x`. Jalankan dashboard **di relay**: relay bisa SSH langsung ke IP tunnel tiap node, sedangkan antar-node lewat relay butuh aturan forward tambahan yang tidak disediakan VPSNAT. Pastikan SSH key sudah ditukar (`ssh-copy-id root@10.250.0.x`) sebelum didaftarkan; IP tunnel tiap node terlihat di `vpsnat relay node-list`.
-
-Di tiap node, beri label agar mudah dikenali dashboard node lain:
-
-```bash
-vpsnat nodes label upcloud-01
-```
-
-Di node manapun (biasanya di relay/node utama), daftarkan node lain:
-
-```bash
-vpsnat nodes add upcloud-01 10.250.0.2
-vpsnat nodes add upcloud-02 10.250.0.3
-vpsnat nodes list
-```
-
-Lihat dashboard gabungan:
-
-```bash
-vpsnat nodes
-```
-
-Contoh output:
-
-```text
-=== VPSNAT Multi-Node Dashboard ===
-
-LABEL          IP               CPU   RAM          DISK         TOTAL  UP     SUSP
----------------------------------------------------------------------------------
-local(lokal)   103.x.x.x        128   89635/1024000M 752/10000G  12     11     1
-upcloud-01     172.232.242.x    6     2100/15600M    6/638G      5      5      0
----------------------------------------------------------------------------------
-Total gabungan: 17 VPS (16 running, 1 suspend)
-```
-
-Node yang tidak bisa dihubungi (mati/relay putus) ditandai `OFFLINE` dan tidak
-menggagalkan tampilan node lainnya. Dashboard yang sama juga tersedia lewat bot
-Telegram (`/nodes`) — hasilnya identik dengan CLI, cuma beda cara aksesnya.
-
-## Install
-
-Ubuntu/Debian host dengan kernel dan privilege yang mendukung LXD direkomendasikan.
-
-### Satu perintah (Bash URL)
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/BimxyzDev/vpsnat/main/get.sh | sudo bash
-```
-
-Mengunduh commit terbaru branch `main`, menjalankan tes, lalu meng-install (jika belum terpasang) atau meng-upgrade. Script yang sama dipakai untuk update; lihat bagian *Update dari GitHub*.
-
-### Dari git clone
-
-```bash
-git clone https://github.com/BimxyzDev/vpsnat.git
-cd vpsnat
-sudo bash vpsnat install
-```
-
-Dipanggil lewat `bash vpsnat ...` (bukan `./vpsnat ...`), jadi instalasi pertama tidak
-bergantung pada execute-bit file di git — tidak akan pernah kena `Permission denied` atau
-`command not found` walau clone dari mirror/zip yang mode filenya berubah. `cmd_install`
-otomatis mem-`chmod +x` seluruh `*.sh` + `vpsnat` di `/usr/local/lib/vpsnat` dan membuat
-symlink `/usr/local/bin/vpsnat`, jadi setelah instalasi pertama, command `vpsnat` biasa
-(tanpa `bash`/`./`) langsung berfungsi dari mana saja.
-
-Setelah install:
-
-```bash
-vpsnat
-vpsnat list
-vpsnat create
-vpsnat host
-vpsnat monitor status
-```
-
-## Web panel
-
-Web panel adalah UI + REST API di atas CLI `vpsnat`. Logika provisioning tetap di modul Bash; `web.py` hanya memanggil CLI, jadi perilaku CLI, bot, dan web selalu sama. Hanya memakai stdlib Python (tanpa pip/venv).
-
-### Setup
-
-```bash
-sudo vpsnat web-setup            # tanya port, username admin, password
-sudo vpsnat web-setup 8787 admin 'PasswordKuat123'   # non-interaktif
-sudo vpsnat web status
-```
-
-**Update dari repository:** gunakan `sudo vpsnat update` agar source terbaru diambil langsung dari branch `main`, dites, lalu dipasang. Untuk memastikan apakah ada update tanpa memasang perubahan, gunakan `vpsnat update --check`. Perintah `sudo bash vpsnat upgrade` tetap tersedia untuk memasang perubahan dari checkout lokal. Panel membaca `web.html` dari `/etc/vpsnat/web/`, sehingga file yang diubah secara lokal baru aktif setelah upgrade.
-
-Setup membuat service `vpsnat-web`, hash password admin (scrypt), dan **API key** (ditampilkan sekali). Port harus 1024-65535 dan tidak boleh masuk range port VPS (`PORT_MIN-PORT_MAX`). Jika memakai `ufw`: `ufw allow 8787/tcp`.
-
-Kelola: `vpsnat web [on|off|restart|status|logs|key|passwd|domain|remove]`
-
-### Login
-
-| Peran | Cara login |
-|-------|-----------|
-| Admin | Username + password dari `web-setup` (UI), atau header `Authorization: Bearer <API key>` (API) |
-| User | Nama VPS **atau** port SSH + password root VPS |
-
-User bisa melihat info/port/SSH, resource live (CPU, RAM, disk, bandwidth), start/stop/restart, dan ganti password. Ubah OS (reinstall) oleh user sengaja dinonaktifkan; hanya admin yang bisa. Admin bisa semuanya plus create, delete, suspend, resize, renew, expire, owner, plan, bandwidth, port, settings, sync, dan dashboard multi-node.
-
-### Domain + HTTPS
-
-```bash
-# A record panel.contoh.com -> IP publik host, port 80/443 terbuka
-sudo vpsnat web-domain panel.contoh.com nginx admin@contoh.com
-sudo vpsnat web-domain status
-sudo vpsnat web-domain remove
-```
-
-Mode `nginx` memasang nginx + certbot, membuat reverse proxy ke `127.0.0.1:<port>`, meminta sertifikat Let's Encrypt, lalu mengunci panel ke localhost (`WEB_BIND=127.0.0.1`, `WEB_TRUST_PROXY=1`). Aman dipasang berdampingan dengan nginx yang sudah ada (misal Pterodactyl) karena memakai `server_name` sendiri.
-
-Mode `tunnel` untuk Cloudflare Tunnel: panel hanya mendengar di localhost dan membaca IP klien dari `CF-Connecting-IP`.
-
-```bash
-sudo vpsnat web-domain panel.contoh.com tunnel
-# lalu tambahkan ingress di cloudflared: hostname panel.contoh.com -> http://127.0.0.1:8787
-```
-
-Untuk reverse proxy buatan sendiri yang terhubung dari **IP non-loopback**, hanya percaya header IP klien dari alamat proxy yang kamu tetapkan secara eksplisit di konfigurasi `/etc/vpsnat/vpsnat.conf`:
-
-```text
-WEB_TRUST_PROXY=1
-WEB_TRUST_PROXY_IPS=10.0.0.2
-WEB_IP_HEADER=X-Forwarded-For
-```
-
-Ganti `10.0.0.2` dengan IP sumber proxy yang benar. Jangan memasukkan IP klien umum atau subnet yang tidak kamu kendalikan. Tanpa daftar ini, header `X-Forwarded-For` dari koneksi non-loopback tidak dipakai untuk rate-limit/login audit. Restart web sesudah mengubah konfigurasi.
-
-### Tampilan
-
-Tema light/dark otomatis mengikuti perangkat, aksen biru `#2563eb`, dan font Inter. Nama dan logo bisa diganti di `/etc/vpsnat/vpsnat.conf`:
-
-```text
-WEB_BRAND=Bimxyz Official
-WEB_LOGO_URL=https://contoh.com/logo.png
-```
-
-Lalu `vpsnat web restart`. Font memakai Google Fonts dengan fallback ke font sistem.
-
-### PWA (pasang sebagai aplikasi)
-
-Panel menyajikan `/manifest.webmanifest`, `/sw.js`, dan ikon (`/icon-192.png`, `/icon-512.png`, `/apple-touch-icon.png`) langsung dari `web.py`; tidak ada file statis tambahan.
-
-- **Syarat HTTPS** (atau `localhost`). Lewat `http://IP:port` panel tetap berjalan normal, hanya tanpa fitur pasang/offline. Gunakan `vpsnat web-domain`.
-- **Cara pasang**: Chrome/Edge (Android dan desktop) tombol **Pasang aplikasi** di header/halaman login atau menu browser; iPhone/iPad Safari: Bagikan → **Tambahkan ke Layar Utama**.
-- **Offline**: hanya shell halaman, manifest, dan ikon yang di-cache. Semua `/api/*` selalu ke jaringan, jadi sesi, password VPS, dan data resource tidak pernah disimpan di cache. Saat offline tampil banner dan layar "Tidak dapat terhubung".
-- **Update**: perubahan `web.html` otomatis membuat versi cache baru; panel menampilkan notifikasi untuk memuat ulang.
-- Nama aplikasi mengikuti `WEB_BRAND`. Reverse proxy buatan sendiri harus meneruskan semua path (bukan hanya `/api/`).
-
-### API
-
-Semua endpoint ada di bawah `/api/`. Tab **API** di panel admin memuat dokumentasi yang sama, lengkap dengan contoh curl yang bisa disalin dan pencarian endpoint.
-
-#### Dasar
-
-| Topik | Keterangan |
-|-------|-----------|
-| Admin (skrip) | Header `Authorization: Bearer <WEB_API_KEY>`. Key dibuat/diganti dengan `sudo vpsnat web key` (tampil sekali). Tanpa cookie dan tanpa `X-Requested-With`. |
-| UI (cookie) | Login lewat `/api/login/admin` atau `/api/login/user`; sesi berupa cookie HttpOnly + SameSite=Strict. Setiap `POST`/`DELETE` wajib header `X-Requested-With: vpsnat`. |
-| Format | Body dan respons JSON UTF-8. Body maks 64 KB, harus objek JSON, memakai `Content-Length` (chunked tidak didukung). |
-| Respons | Sukses `{"ok": true, ...}`; gagal `{"ok": false, "error": "pesan"}` dengan status HTTP sesuai. |
-| Rate limit | 5 login gagal per IP per 15 menit (per VPS: 20) membalas `429`. API key salah juga dihitung. |
-
-| Status | Arti |
-|--------|------|
-| 200 / 202 | Berhasil / job dimulai |
-| 400 | Perintah CLI gagal (pesan di `error`) |
-| 401 | Belum login atau API key salah |
-| 403 | Peran tidak sesuai, header `X-Requested-With` hilang, atau endpoint dinonaktifkan (`/api/me/reinstall`) |
-| 404 | Endpoint, VPS, atau job tidak ditemukan |
-| 409 | VPS sudah ada atau sedang diproses job lain |
-| 413 | Body lebih dari 64 KB |
-| 422 | Validasi input gagal |
-| 429 | Terlalu banyak percobaan login gagal |
-| 500 / 503 | Kesalahan internal / admin belum dikonfigurasi, server sibuk, atau job tidak bisa dijalankan |
-
-#### Job (operasi panjang)
-
-Create, delete, dan reinstall membalas `202 {"ok": true, "job": "<id 12 hex>"}`. Polling `GET /api/admin/jobs/{id}` (user: `/api/me/jobs/{id}` tersisa untuk kompatibilitas) tiap 2-3 detik sampai `status` bukan `running`.
-
-```json
-{"ok": true, "job": {"id": "a1b2c3d4e5f6", "kind": "create", "name": "demo",
-  "status": "running", "rc": null, "output": "", "started": 1790000000, "finished": null}}
-```
-
-`kind`: `create`, `delete`, `reinstall`. `status`: `running`, `done`, `error`, `interrupted` (job terputus karena service restart; tidak diulang otomatis). Password pada output job disamarkan; ambil lewat `GET /api/admin/vps/{name}`.
-
-#### Contoh alur
-
-```bash
-KEY=<API key>; BASE=https://panel.contoh.com
-H="Authorization: Bearer $KEY"
-
-# 1. buat VPS (job)
-JOB=$(curl -s -X POST -H "$H" \
-  -d '{"name":"demo","cpu":2,"ram":2048,"disk":20,"ports":5,"expire":"30d"}' \
-  $BASE/api/admin/vps | jq -r .job)
-
-# 2. tunggu selesai
-while [ "$(curl -s -H "$H" $BASE/api/admin/jobs/$JOB | jq -r .job.status)" = running ]; do sleep 3; done
-
-# 3. ambil detail + password
-curl -s -H "$H" $BASE/api/admin/vps/demo
-```
-
-#### Format detail VPS
-
-```json
-{"ok": true, "vps": {"name": "demo", "state": "RUNNING", "suspended": false, "reason": "-",
-  "plan": "shared", "backend": "container", "cpu": 2, "ram": 2048, "disk": 20,
-  "created": "2026-10-01", "expires": 1790000000, "host": "203.0.113.10", "ssh": 20000,
-  "ports": [{"public": 20000, "internal": 22, "proto": "tcp", "ssh": true}],
-  "bw": {"used": 0, "rx": 0, "tx": 0, "quota": 0, "rate": 0, "exhausted": false},
-  "ip": "10.10.10.2", "owner": "-", "password": "..."}}
-```
-
-`ram` MB, `disk` GB, `expires` epoch detik (0 = tanpa expired), `bw.*` byte (`rate` Mbps). `ip`/`owner` hanya untuk admin; `password` hanya di endpoint detail. Daftar (`GET /api/admin/vps`) tidak memuat `password`.
-
-#### Autentikasi & sesi
-
-| Method | Path | Body | Keterangan |
-|--------|------|------|-----------|
-| GET | `/api/session` | - | `{ok, brand, logo, role, name}`; `role` = `admin`/`user`/`null` |
-| POST | `/api/login/admin` | `username`, `password` | Cookie sesi; 401/429/503 |
-| POST | `/api/login/user` | `identifier` (nama VPS atau port SSH), `password` | Cookie sesi; VPS hasil `sync` (password `unknown`) tidak bisa login |
-| POST | `/api/logout` | `{}` | Cabut sesi |
-
-#### User (cookie sesi user; API key admin tidak berlaku)
-
-| Method | Path | Body | Keterangan |
-|--------|------|------|-----------|
-| GET | `/api/me` | - | Detail VPS sendiri + password |
-| GET | `/api/me/resources` | - | CPU, RAM, disk, network, bandwidth live |
-| POST | `/api/me/action` | `action`: `start`/`stop`/`restart` | |
-| POST | `/api/me/passwd` | `password?` | 8-64 karakter `A-Za-z0-9@%^*_+=.,:;!?~-`; kosong = acak |
-| POST | `/api/me/reinstall` | - | **Dinonaktifkan**: selalu `403`. Reinstall hanya lewat endpoint admin |
-| GET | `/api/me/jobs/{id}` | - | Job milik sendiri |
-
-#### Admin: VPS
-
-`{name}` = nama VPS. `image`: `ubuntu24`, `ubuntu22` (default), `ubuntu20`, `debian12`, `debian11`, `alma9`, `rocky9`, `alpine`.
-
-| Method | Path | Body | Keterangan |
-|--------|------|------|-----------|
-| GET | `/api/admin/host` | - | IP publik, CPU, RAM, disk, uptime, domain panel, hitungan VPS |
-| GET | `/api/admin/vps` | - | Daftar VPS + `limits: {ports_min, ports_max}` |
-| POST | `/api/admin/vps` | lihat bawah | Buat VPS (job); 409 jika nama sudah ada |
-| GET | `/api/admin/vps/{name}` | - | Detail + password |
-| DELETE | `/api/admin/vps/{name}` | - | Hapus permanen (job); tanpa konfirmasi di API |
-| GET | `/api/admin/vps/{name}/resources` | - | Resource live |
-| POST | `/api/admin/vps/{name}/action` | `action`: `start` `stop` `restart` `suspend` `unsuspend` | |
-| POST | `/api/admin/vps/{name}/reinstall` | `image?` | Job |
-| POST | `/api/admin/vps/{name}/passwd` | `password?` | Kosong = acak; respons memuat `password` |
-| POST | `/api/admin/vps/{name}/resize` | `cpu?` 1-128, `ram?` MB 128-1048576, `disk?` GB (tidak boleh mengecil, maks 10000) | Field yang tidak dikirim tetap |
-| POST | `/api/admin/vps/{name}/renew` | `duration` mis. `30d` | Durasi relatif positif (`h`/`d`/`w`/`m`); reset counter bandwidth |
-| POST | `/api/admin/vps/{name}/expire` | `value`: `30d`, `YYYY-MM-DD`, `never`, `0` | Maks 10 tahun |
-| POST | `/api/admin/vps/{name}/owner` | `owner` | Maks 60 karakter, tanpa `\|`; kosong = `-` |
-| POST | `/api/admin/vps/{name}/plan` | `plan`: `shared`/`dedicated` | |
-| POST | `/api/admin/vps/{name}/bandwidth` | `action`: `set`/`limit`/`reset`, `quota_gb`, `rate_mbit` | `set` memakai keduanya (0 = tanpa batas); `limit` hanya `rate_mbit` |
-| POST | `/api/admin/vps/{name}/ports` | `proto?`: `tcp` (default)/`udp`/`both`, `count?` 1-500 | Tambah port berurutan |
-| DELETE | `/api/admin/vps/{name}/ports/{port}` | - | Hapus port aplikasi (nomor publik); port SSH tidak bisa |
-
-Body `POST /api/admin/vps`:
-
-| Field | Tipe | Default | Keterangan |
-|-------|------|---------|-----------|
-| `name` | string | wajib | `a-z0-9-`, awal huruf/angka, maks 31 karakter |
-| `image` | string | `ubuntu22` | lihat daftar di atas |
-| `cpu` / `ram` / `disk` | integer | 1 / 1024 / 10 | 1-128 / MB 128-1048576 / GB 1-10000 |
-| `ports` | integer | 3 | 2-50 total, termasuk 1 SSH |
-| `plan` | string | `shared` | `shared`/`dedicated` |
-| `backend` | string | `container` | `container`/`vm` |
-| `expire` | string | `0` | `30d`, `2w`, `1m`, `12h`, `YYYY-MM-DD`, `never`, `0` |
-| `owner` | string | `-` | maks 60 karakter, tanpa `\|` |
-| `nesting` | boolean | `true` | hanya container |
-| `password` | string | acak | 8-64 karakter |
-| `bw_quota_gb` / `bw_rate_mbit` | number | default setting | 0-1000000 / 0-100000 |
-
-#### Admin: sistem
-
-| Method | Path | Body | Keterangan |
-|--------|------|------|-----------|
-| GET | `/api/admin/settings` | - | `{settings, keys}` |
-| POST | `/api/admin/settings` | `key`, `value` | `key`: `grace`, `shared-suspend-minutes`, `shared-threshold`, `monitor-interval`, `bandwidth-default-quota`, `bandwidth-default-rate`; `value` angka 0-1000000 |
-| POST | `/api/admin/sync` | `{}` | Sinkronkan DB dengan LXD; guest tanpa record diimpor suspend |
-| GET | `/api/admin/nodes` | - | Dashboard multi-node (teks di `output`) |
-| GET | `/api/admin/jobs` | - | 30 job terbaru |
-| GET | `/api/admin/jobs/{id}` | - | Satu job |
-
-### Keamanan web panel
-
-- Password admin di-hash scrypt; API key minimal 32 karakter.
-- Login dibatasi 5 gagal per IP per 15 menit (per VPS 20), sesi HttpOnly + SameSite=Strict, sesi user dicabut saat password VPS berubah.
-- Request mutasi lewat cookie wajib header `X-Requested-With: vpsnat` (proteksi CSRF); API key tidak memakai cookie.
-- CSP ketat, `X-Frame-Options: DENY`, HSTS saat HTTPS.
-- Input divalidasi ketat dan CLI dipanggil tanpa shell.
-- **Jangan expose tanpa HTTPS.** Tanpa TLS, password lewat jaringan dalam bentuk plaintext. Pakai `vpsnat web-domain` atau reverse proxy TLS sendiri.
-- Login user memakai password root VPS yang tersimpan di DB. Jika password diubah langsung dari dalam VPS (`passwd`), DB tidak ikut berubah dan login panel gagal; ganti lewat panel atau CLI.
-- Sesi disimpan di memori; restart service membuat semua sesi logout.
-
-## Telegram bot
-
-```bash
-sudo vpsnat bot-setup
+sudo vpsnat bot-setup            # token dari @BotFather + chat id admin
 sudo vpsnat bot status
 ```
 
-Bot memakai `python-telegram-bot` di virtualenv `/etc/vpsnat/bot/venv` dan hanya menjadi UI untuk CLI. Logika provisioning tetap berada di modul Bash.
+Bot berjalan di **panel** dan memakai data panel; operasi yang menyentuh mesin client
+diteruskan ke node.
 
-## Perbaikan jumlah port saat create
+## Keamanan
 
-Panel mengirim nilai jumlah port tervalidasi ke CLI melalui argumen eksplisit serta environment `NPORTS`. CLI mengecek jumlah port unik yang benar-benar tersimpan di database; jika tidak cocok dengan permintaan (misalnya input 5 tetapi hanya 1 tersimpan), proses create dibatalkan dan tidak dilaporkan sukses. Setelah menimpa file source, jalankan `sudo bash vpsnat upgrade` dari folder repository agar runtime CLI dan file web di `/etc/vpsnat/web/` ikut diperbarui.
+- Password admin di-hash scrypt; API key minimal 32 karakter.
+- Login dibatasi 5 gagal per IP per 15 menit (per server 20), sesi HttpOnly + SameSite=Strict.
+- Request mutasi lewat cookie wajib `X-Requested-With` **dan** Origin/Referer cocok.
+- CSP ketat, `X-Frame-Options: DENY`, HSTS saat HTTPS.
+- Token agent node hanya bisa dipakai panel; buka port agent hanya untuk IP panel.
+- **Jangan expose panel tanpa HTTPS.** Tanpa TLS, password lewat jaringan sebagai plaintext.
+- File DB/config bermode `0600`; operasi tulis memakai transaksi SQLite / `flock`.
 
-## Update dari GitHub
-
-### Bash URL (paling cepat)
-
-```bash
-# Install baru atau update ke commit terbaru
-curl -fsSL https://raw.githubusercontent.com/BimxyzDev/vpsnat/main/get.sh | sudo bash
-
-# Cek saja, tanpa mengubah instalasi
-curl -fsSL https://raw.githubusercontent.com/BimxyzDev/vpsnat/main/get.sh | sudo bash -s -- --check
-
-# Paksa pasang ulang commit yang sama
-curl -fsSL https://raw.githubusercontent.com/BimxyzDev/vpsnat/main/get.sh | sudo bash -s -- --force
-```
-
-`get.sh` mengambil SHA commit terbaru dari GitHub, mengunduh source pada commit itu, menjalankan `test.sh`, lalu `install` (belum terpasang) atau `upgrade` (sudah terpasang), dan mencatat SHA di `/etc/vpsnat/source.commit`. Tidak perlu `git clone`, dan bisa dipakai di instalasi lama yang belum punya `vpsnat update`. Seluruh isinya dibungkus fungsi yang dipanggil di baris terakhir, sehingga unduhan terpotong tidak menjalankan perintah setengah jadi.
-
-Opsi lewat environment: `VPSNAT_REPO=owner/repo`, `VPSNAT_BRANCH=branch`, `VPSNAT_REF=<sha 40 hex>` (kunci ke satu commit), `VPSNAT_SKIP_TESTS=1`. Contoh: `curl -fsSL <url>/get.sh | sudo env VPSNAT_BRANCH=dev bash`.
-
-Catatan: `raw.githubusercontent.com` men-cache beberapa menit, jadi commit yang baru di-push bisa tertunda. Script ini berjalan sebagai root; untuk memeriksanya dulu: `curl -fsSL <url>/get.sh -o get.sh && less get.sh && sudo bash get.sh`. Tanpa terminal (mis. cron/CI), installer berjalan non-interaktif dengan nilai default.
-
-### Perintah `vpsnat update`
-
-Updater mengambil SHA commit dan nomor versi dari repository GitHub `BimxyzDev/vpsnat` (branch `main`), mengunduh source pada commit tersebut, menjalankan `test.sh`, lalu menjalankan proses upgrade hanya jika tes lulus. SHA yang berhasil dipasang dicatat di `/etc/vpsnat/source.commit`, agar pemeriksaan update tidak hanya bergantung pada nomor versi.
+## Tes
 
 ```bash
-# Cek versi/commit terbaru, tanpa mengubah instalasi
-vpsnat update --check
-
-# Ambil, tes, dan pasang source terbaru
-sudo vpsnat update
-
-# Paksa pasang ulang commit terbaru yang sama
-sudo vpsnat update --force
+bash tests/test.sh          # syntax semua skrip, unit CLI, struktur repo, smoke test panel
+python3 tests/test_panel.py # panel + agent node tiruan: alur penuh end-to-end
 ```
 
-Updater membutuhkan koneksi internet serta `curl`, `tar`, dan Python 3. Source baru diuji sebelum pemasangan. `install_runtime_tree` menyiapkan staging directory dan mempertahankan runtime sebelumnya sebagai `/usr/local/lib/vpsnat.previous` jika perlu pemulihan. Untuk instalasi lama yang belum memiliki command `update`, jalankan `git pull` di checkout sumber lalu `sudo bash vpsnat upgrade` satu kali. Setelah itu gunakan updater. Untuk pengembangan lokal yang belum di-push, `sudo bash vpsnat upgrade` tetap memasang checkout lokal; command itu tidak mengambil source dari GitHub.
+`tests/test_panel.py` menyalakan agent node tiruan (`tests/mock_node.py`), panel
+sungguhan, dan worker, lalu menguji login, registrasi node, alokasi port, create server
+(job), sync, power/resize/port/password, login client, keamanan, semua halaman, dan hapus.
 
-## Testing
+## Dokumentasi
 
-```bash
-./test.sh        # syntax Bash/Python, unit CLI, dan smoke test API web (CLI/LXC palsu)
-python3 test_web.py
-```
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — model panel/node, skema DB, protokol agent
+- [docs/INSTALL-PANEL.md](docs/INSTALL-PANEL.md) — pasang & rawat panel
+- [docs/INSTALL-NODE.md](docs/INSTALL-NODE.md) — pasang & rawat node
+- [docs/CLI.md](docs/CLI.md) — semua perintah CLI
+- [docs/API.md](docs/API.md) — REST API
+- [docs/UPGRADE.md](docs/UPGRADE.md) — upgrade & migrasi dari v3
+- [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) — diagnosa masalah umum
+- [CHANGELOG.md](CHANGELOG.md) — riwayat versi
 
-## Monitoring
+## Lisensi
 
-Service monitor:
-
-```bash
-sudo vpsnat monitor status
-sudo vpsnat monitor logs
-sudo vpsnat resource-check
-```
-
-Konfigurasi:
-
-```text
-SHARED_SUSPEND_MINUTES=60
-RESOURCE_SAMPLE_SECONDS=15
-SHARED_RESOURCE_THRESHOLD=100
-SHARED_CPU_TOLERANCE=2
-PENALTY_DECAY_PERCENT=25
-```
-
-Semua setting dapat diubah tanpa menyunting file konfigurasi manual:
-
-```bash
-vpsnat settings show
-vpsnat settings set shared-suspend-minutes 60
-vpsnat settings set shared-threshold 100
-vpsnat settings set monitor-interval 15
-vpsnat settings set bandwidth-default-quota 500
-vpsnat settings set bandwidth-default-rate 100
-vpsnat settings set shared-cpu-tolerance 2
-vpsnat settings set proc-limit-shared 512
-vpsnat settings set proc-limit-dedicated 2048
-vpsnat settings set conn-limit 1024
-vpsnat settings set smtp-block 1
-```
-
-Resource percentage dihitung terhadap resource yang dialokasikan. CPU menggunakan delta CPU time LXD terhadap interval sampling dan jumlah vCPU; memory menggunakan memory usage terhadap limit. LXD mengekspos CPU, memory, dan network usage pada state/resources instance.
-
-## Database compatibility
-
-Database versi lama tetap digunakan. Saat startup/install/upgrade, field tambahan akan otomatis ditambahkan tanpa menghapus data lama. Sebelum migrasi pada `vpsnat upgrade`, DB dicadangkan ke `/etc/vpsnat/backups/` dan diverifikasi setelahnya. v3.4.0 tidak mengubah schema (tetap 25 field).
-
-## Security notes
-
-- File DB/config diberi mode `0600`.
-- Operasi yang memodifikasi DB memakai `flock`.
-- Bot hanya menerima user dalam `TG_ADMIN`.
-- Web panel: lihat bagian *Keamanan web panel*. Jangan commit `vpsnat.conf` atau `vps.db` (sudah ada di `.gitignore`).
-- Token callback bot mempunyai TTL.
-- Folder backup DB `/etc/vpsnat/backups/` bermode `0700` dan berisi salinan `vps.db` (termasuk password VPS): ikut dijaga/dihapus bersama DB.
-- Hardening host/VPS (limit proses, anti-spoofing NIC, SMTP block, conn-limit): lihat bagian *Hardening*.
-- Password VPS masih tersimpan pada DB untuk kompatibilitas CLI lama; untuk deployment publik, batasi permission host dengan ketat.
+MIT — lihat [LICENSE](LICENSE).
 
 ## Disclaimer
 
-VPSNAT memodifikasi firewall, network namespace, storage, dan LXD instances. Uji di staging sebelum diterapkan ke node produksi. Pastikan host memiliki akses console/out-of-band sebelum mengubah jaringan.
-
-
-### Recovery safety note (3.2.5)
-
-When `vpsnat sync` discovers a guest that exists in LXD but has no database record, it imports the guest with `sync-pending` reason and keeps it suspended. Inspect the IP, SSH port, disk limit, and firewall mapping before re-enabling it with `sudo vpsnat unsuspend NAME`. This avoids exposing an orphan guest using guessed allocation metadata.
+VPSNAT memodifikasi firewall, network namespace, storage, dan instance LXD. Uji di
+staging sebelum dipakai di node produksi. Pastikan host punya akses console/out-of-band
+sebelum mengubah jaringan.

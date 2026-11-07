@@ -1,0 +1,16 @@
+[Unit]
+Description=VPSNAT Node Agent (data-plane)
+After=network-online.target snap.lxd.daemon.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Environment=VPSNAT_NODE_CONF=/etc/vpsnat/vpsnat.conf
+ExecStart=/usr/bin/python3 /usr/local/lib/vpsnat/node/agent.py serve
+Restart=always
+RestartSec=3
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

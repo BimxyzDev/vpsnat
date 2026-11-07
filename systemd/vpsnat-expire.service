@@ -1,0 +1,6 @@
+[Unit]
+Description=VPSNAT expiry check (node)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/vpsnat expire-check
